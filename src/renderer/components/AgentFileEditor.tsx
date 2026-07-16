@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import type { PluginType, PluginItemMeta } from "../../shared/types";
+import {
+  NAME_REGEX,
+  PLUGIN_TYPE_LABEL,
+  buildNewBody as buildNewPluginBody,
+} from "../../shared/utils";
 
 interface Props {
   agentName: string;
@@ -8,19 +13,6 @@ interface Props {
   target: PluginItemMeta | "new";
   onClose: () => void;
 }
-
-/** 校验规则与主进程 agent-manager.ts / plugin-manager.ts 保持一致。 */
-const NAME_REGEX: Record<PluginType, RegExp> = {
-  prompts: /^[a-z0-9][a-z0-9-]*$/,
-  skills: /^[a-z0-9][a-z0-9-]*$/,
-  extensions: /^[a-z0-9][a-z0-9._-]*$/,
-};
-
-const TYPE_LABEL: Record<PluginType, string> = {
-  prompts: "Prompt 模板",
-  skills: "Skill",
-  extensions: "Extension",
-};
 
 export function AgentFileEditor({ agentName, type, target, onClose }: Props) {
   const isNew = target === "new";
@@ -79,7 +71,7 @@ export function AgentFileEditor({ agentName, type, target, onClose }: Props) {
         const r = await window.agentAPI.fileSave(agentName, type, name, body);
         if (!r.ok) throw new Error(r.error);
       } else {
-        const payload = buildNewBody(type, name, description, argumentHint, body);
+        const payload = buildNewPluginBody(type, name, description, argumentHint, body);
         const r = await window.agentAPI.fileCreate(agentName, type, name, payload);
         if (!r.ok) throw new Error(r.error);
       }
@@ -110,7 +102,7 @@ export function AgentFileEditor({ agentName, type, target, onClose }: Props) {
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog plugin-editor" onClick={(e) => e.stopPropagation()}>
         <h2>
-          {isNew ? "新建" : "编辑"} {TYPE_LABEL[type]}
+          {isNew ? "新建" : "编辑"} {PLUGIN_TYPE_LABEL[type]}
           <span className="plugin-editor-hint" style={{ marginLeft: 8 }}>
             agent: <code>{agentName}</code>
           </span>
@@ -233,40 +225,4 @@ export function AgentFileEditor({ agentName, type, target, onClose }: Props) {
   );
 }
 
-/** 新建模式：根据类型构造初始文件内容。 */
-function buildNewBody(
-  type: PluginType,
-  name: string,
-  description: string,
-  argumentHint: string,
-  bodyOverride: string
-): string {
-  if (bodyOverride && type === "extensions") return bodyOverride;
-
-  const frontmatterLines = ["---"];
-  if (type === "skills") {
-    frontmatterLines.push(`name: "${name}"`);
-    frontmatterLines.push(`description: "${description || `${name} skill`}"`);
-  } else if (type === "prompts") {
-    frontmatterLines.push(`description: "${description || `${name} prompt template`}"`);
-    if (argumentHint) frontmatterLines.push(`argument-hint: "${argumentHint}"`);
-  }
-  frontmatterLines.push("---", "");
-
-  if (type === "extensions") {
-    return [
-      `import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";`,
-      "",
-      "export default function (_ctx: ExtensionContext, pi: ExtensionAPI) {",
-      `  // 在此实现 ${name} 扩展`,
-      "}",
-      "",
-    ].join("\n");
-  }
-
-  const header =
-    type === "prompts"
-      ? `# ${name}\n\n你的提示正文写在这里。可用 $1, $@, ${"$"}{1:-default} 等变量。\n`
-      : `# ${name}\n\n描述此 skill 的工作流步骤。\n`;
-  return frontmatterLines.join("\n") + header;
-}
+/** buildNewBody 见 src/shared/utils.ts。 */

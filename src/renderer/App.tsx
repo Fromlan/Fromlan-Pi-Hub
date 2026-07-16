@@ -1,33 +1,33 @@
 import { useEffect, useState } from "react";
 import { useStore } from "./store";
-import { TabBar } from "./components/TabBar";
+import { IconRail } from "./components/IconRail";
+import { Sidebar } from "./components/Sidebar";
 import { NewSessionDialog } from "./components/NewSessionDialog";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
 import { PluginsPanel } from "./components/PluginsPanel";
 import { AgentsPanel } from "./components/AgentsPanel";
-import { AGENTS_TAB_ID, PLUGIN_TAB_ID } from "../shared/types";
+import { SettingsPanel } from "./components/SettingsPanel";
 
 export function App() {
   const sessions = useStore((s) => s.sessions);
-  const activeId = useStore((s) => s.activeId);
+  const activePanel = useStore((s) => s.activePanel);
+  const activeSessionId = useStore((s) => s.activeSessionId);
+  const activePersistedId = useStore((s) => s.activePersistedId);
   const persistedSessions = useStore((s) => s.persistedSessions);
   const [showNew, setShowNew] = useState(false);
 
-  const active = sessions.find((s) => s.id === activeId) ?? null;
-  const isPluginsTab = activeId === PLUGIN_TAB_ID;
-  const isAgentsTab = activeId === AGENTS_TAB_ID;
-
-  // 判断当前活跃的是否为"历史会话占位"（仅在 persistedSessions 中存在）
-  const isPersistedActive =
-    !active && !isPluginsTab && activeId != null && persistedSessions.some((p) => p.id === activeId);
-  const persistedActive = isPersistedActive
-    ? persistedSessions.find((p) => p.id === activeId) ?? null
-    : null;
+  const active =
+    activePanel === "chat" && activeSessionId
+      ? sessions.find((s) => s.id === activeSessionId) ?? null
+      : null;
+  const persistedActive =
+    activePanel === "chat" && !active && activePersistedId
+      ? persistedSessions.find((p) => p.id === activePersistedId) ?? null
+      : null;
 
   useEffect(() => {
     const store = useStore.getState();
-    // 首帧拉取现有会话和历史会话
     window.sessionAPI.list().then((list) => store.setSessions(list));
     window.sessionAPI.historyList().then((list) => store.setPersistedSessions(list));
 
@@ -37,7 +37,6 @@ export function App() {
       window.sessionAPI.onKilled((id) => {
         const state = useStore.getState();
         state.removeSession(id);
-        // 杀掉后刷新历史会话列表（因为 kill 时会把会话移到 persisted）
         window.sessionAPI.historyList().then((list) => state.setPersistedSessions(list));
       }),
       window.sessionAPI.onEvent(({ sessionId, event }) =>
@@ -47,11 +46,10 @@ export function App() {
     return () => unsubs.forEach((u) => u());
   }, []);
 
-  // 点击历史会话 tab 时加载其消息
+  // 切换到已停止会话时按需加载历史消息
   useEffect(() => {
     if (!persistedActive) return;
     const store = useStore.getState();
-    // 只在未加载过消息时加载
     if (store.messagesBySession[persistedActive.id]?.length) return;
     window.sessionAPI.historyGetMessages(persistedActive.id).then((msgs) => {
       store.importMessages(persistedActive.id, msgs);
@@ -60,12 +58,15 @@ export function App() {
 
   return (
     <div className="app">
-      <TabBar onNew={() => setShowNew(true)} />
-      <div className="main">
-        {isAgentsTab ? (
+      <IconRail onNew={() => setShowNew(true)} />
+      <Sidebar onNew={() => setShowNew(true)} />
+      <main className="main">
+        {activePanel === "agents" ? (
           <AgentsPanel />
-        ) : isPluginsTab ? (
+        ) : activePanel === "plugins" ? (
           <PluginsPanel />
+        ) : activePanel === "settings" ? (
+          <SettingsPanel />
         ) : active ? (
           <>
             <MessageList sessionId={active.id} />
@@ -84,7 +85,7 @@ export function App() {
             </button>
           </div>
         )}
-      </div>
+      </main>
       {showNew && <NewSessionDialog onClose={() => setShowNew(false)} />}
     </div>
   );

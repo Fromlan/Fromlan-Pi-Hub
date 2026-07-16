@@ -5,12 +5,43 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
+      content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'"
     />
     <title>Lite-Pi</title>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // 仅在非 Electron 环境（浏览器直访 dev server）注入 IPC mock，避免 vite CSP 下报错
+      if (!window.sessionAPI) {
+        const noop = () => () => {};
+        const ok = () => Promise.resolve({ ok: true });
+        const empty = () => Promise.resolve([]);
+        window.sessionAPI = {
+          list: empty, historyList: empty,
+          onSpawned: noop, onChange: noop, onKilled: noop, onEvent: noop,
+          kill: ok, saveMessages: ok, historyDelete: ok, historyGetMessages: empty,
+          start: () => Promise.resolve({ ok: true, session: { id: 'mock-1', provider: 'mock', model: 'mock', title: 'mock', status: 'idle', messageCount: 0, pendingMessageCount: 0, createdAt: 0, lastActivityAt: 0 } }),
+        };
+        window.pluginAPI = {
+          list: () => Promise.resolve({ prompts: [], skills: [], extensions: [] }),
+          read: () => Promise.resolve({ body: '', meta: { name: '', relPath: '', size: 0, mtime: 0, isSymlink: false } }),
+          save: ok, create: ok, remove: ok,
+        };
+        window.agentAPI = {
+          list: empty,
+          fileList: () => Promise.resolve({ prompts: [], skills: [], extensions: [] }),
+          fileRead: () => Promise.resolve({ body: '', meta: { name: '', relPath: '', size: 0, mtime: 0, isSymlink: false } }),
+          fileSave: ok, fileCreate: ok, fileDelete: ok,
+        };
+        window.appAPI = {
+          getModels: empty,
+          getHomeDir: () => Promise.resolve('C:\\Users\\Test'),
+          pickDirectory: () => Promise.resolve(null),
+          pathStat: () => Promise.resolve({ ok: false }),
+        };
+      }
+    </script>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

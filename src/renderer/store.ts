@@ -7,6 +7,7 @@ import type {
   PluginType,
   PluginItemMeta,
   AgentMeta,
+  PanelKind,
 } from "../shared/types";
 
 /** pi content 数组中段项（宽松结构：text / thinking / toolCall）。 */
@@ -61,46 +62,74 @@ export interface Msg {
 }
 
 interface StoreState {
+  // ── 路由（新模型）──
+  activePanel: PanelKind;
+  activeSessionId: string | null;
+  activePersistedId: string | null;
+  // activeId 保留作为兼容旧组件的薄壳 getter；setActive 内部路由到新字段。
+
+  // ── 会话数据 ──
   sessions: SessionSnapshot[];
+  /** @deprecated 由 activeSessionId 取代；保留以兼容旧代码读取。 */
   activeId: string | null;
   messagesBySession: Record<string, Msg[]>;
   draftBySession: Record<string, string>;
   persistedSessions: SessionSnapshot[];
 
-  /** 虚拟 tab 保留 id：不参与 sessions 列表的覆盖与清空。 */
-  // 当前预留 "__plugins__"。store 层不强制用字面量，方便后续扩展。
+  // ── UI 偏好 ──
+  theme: "dark" | "light";
+  sidebarSearch: string;
+  showStoppedGroup: boolean;
 
-  /** 插件列表缓存：按 type 索引到该类型下所有条目。 */
+  // ── 插件/Agent 缓存 ──
   plugins: Record<PluginType, PluginItemMeta[]>;
   /** 顶部提示信息（保存后提示 /reload）。 */
   lastNotice: string | null;
-
-  /** Agent 列表。 */
   agents: AgentMeta[];
 
+  // ── Actions: 路由 ──
+  setPanel: (panel: PanelKind) => void;
+  setSession: (id: string | null) => void;
+  setPersistedSession: (id: string | null) => void;
+  /** @deprecated 兼容旧调用点：根据 id 类型路由到 setPanel / setSession / setPersistedSession。 */
   setActive: (id: string | null) => void;
+
+  // ── Actions: 会话 ──
   upsertSession: (snap: SessionSnapshot) => void;
   removeSession: (id: string) => void;
   setSessions: (list: SessionSnapshot[]) => void;
   setDraft: (id: string, text: string) => void;
+  /** 关闭会话：保存消息 → 触发主进程 kill → 1800ms 后从 sessions 移除（防止状态翻转）。 */
+  closeSession: (id: string) => Promise<void>;
+  /** 删除已停止会话历史。 */
+  deletePersisted: (id: string) => Promise<void>;
 
+  // ── Actions: 消息 ──
   addUserMessage: (sessionId: string, text: string) => string;
   removeMessage: (sessionId: string, msgId: string) => void;
   markMessageConfirmed: (sessionId: string, msgId: string) => void;
   applyEvent: (sessionId: string, event: PiEvent) => void;
 
+  // ── Actions: 持久化 ──
   setPersistedSessions: (list: SessionSnapshot[]) => void;
   importMessages: (sessionId: string, msgs: MsgData[]) => void;
   resolvePersistedSession: (id: string) => void;
 
+  // ── Actions: 插件 ──
   setPlugins: (type: PluginType, list: PluginItemMeta[]) => void;
   upsertPlugin: (type: PluginType, meta: PluginItemMeta) => void;
   removePlugin: (type: PluginType, name: string) => void;
   setNotice: (text: string | null) => void;
 
+  // ── Actions: Agent ──
   setAgents: (list: AgentMeta[]) => void;
   upsertAgent: (meta: AgentMeta) => void;
   removeAgent: (name: string) => void;
+
+  // ── Actions: 偏好 ──
+  toggleTheme: () => void;
+  setSidebarSearch: (q: string) => void;
+  toggleStoppedGroup: () => void;
 }
 
 let msgSeq = 0;
@@ -208,22 +237,89 @@ function extractTextContent(content: unknown): string {
 }
 
 export const useStore = create<StoreState>((set, get) => ({
-  sessions: [],
+  // ── 路由 ──
+  activePanel: "chat",
+  activeSessionId: null,
+  activePersistedId: null,
   activeId: null,
+
+  // ── 会话数据 ──
+  sessions: [],
   messagesBySession: {},
   draftBySession: {},
   persistedSessions: [],
+
+  // ── UI 偏好 ──
+  theme: "dark",
+  sidebarSearch: "",
+  showStoppedGroup: true,
+
+  // ── 缓存 ──
   plugins: { prompts: [], skills: [], extensions: [] },
   lastNotice: null,
   agents: [],
 
-  setActive: (id) => set({ activeId: id }),
+  // ── 路由 actions ──
+  setPanel: (panel) =>
+    set({
+      activePanel: panel,
+      activeId: panel === "chat" ? (get().activeSessionId ?? get().activePersistedId) : `__${panel}__`,
+    }),
 
+  setSession: (id) =>
+    set({
+      activeSessionId: id,
+      activePanel: "chat",
+      activePersistedId: null,
+      activeId: id,
+    }),
+
+  setPersistedSession: (id) =>
+    set({
+      activePersistedId: id,
+      activePanel: "chat",
+      activeSessionId: null,
+      activeId: id,
+    }),
+
+  setActive: (id) => {
+    if (id == null) {
+      set({ activeSessionId: null, activePersistedId: null, activeId: null });
+      return;
+    }
+    if (id === "__plugins__") {
+      get().setPanel("plugins");
+      return;
+    }
+    if (id === "__agents__") {
+      get().setPanel("agents");
+      return;
+    }
+    if (id === "__settings__") {
+      get().setPanel("settings");
+      return;
+    }
+    // 真实 id：判断是运行中还是历史
+    const state = get();
+    if (state.sessions.some((s) => s.id === id)) {
+      get().setSession(id);
+    } else if (state.persistedSessions.some((p) => p.id === id)) {
+      get().setPersistedSession(id);
+    } else {
+      set({ activeId: id });
+    }
+  },
+
+  // ── 会话 actions ──
   setSessions: (list) =>
-    set((s) => ({
-      sessions: list,
-      activeId: s.activeId ?? (list[0]?.id ?? null),
-    })),
+    set((s) => {
+      const nextActiveSessionId = s.activeSessionId ?? list[0]?.id ?? null;
+      return {
+        sessions: list,
+        activeSessionId: nextActiveSessionId,
+        activeId: s.activePanel === "chat" ? nextActiveSessionId : s.activeId,
+      };
+    }),
 
   upsertSession: (snap) =>
     set((s) => {
@@ -233,9 +329,11 @@ export const useStore = create<StoreState>((set, get) => ({
           ? [...s.sessions, snap]
           : s.sessions.map((x) => (x.id === snap.id ? snap : x));
       const hasMsgs = snap.id in s.messagesBySession;
+      const isNewSession = idx === -1;
       return {
         sessions,
-        activeId: s.activeId ?? snap.id,
+        activeSessionId: s.activeSessionId ?? (isNewSession ? snap.id : s.activeSessionId),
+        activeId: s.activePanel === "chat" && isNewSession ? snap.id : s.activeId,
         messagesBySession: hasMsgs
           ? s.messagesBySession
           : { ...s.messagesBySession, [snap.id]: [] },
@@ -247,13 +345,11 @@ export const useStore = create<StoreState>((set, get) => ({
       const sessions = s.sessions.filter((x) => x.id !== id);
       const { [id]: _drop, ...restMsgs } = s.messagesBySession;
       const { [id]: _d2, ...restDraft } = s.draftBySession;
-      let activeId = s.activeId;
-      // 虚拟 tab（以 "__" 开头）始终保留，不被 sessions 清空覆盖。
-      const isVirtual = typeof activeId === "string" && activeId.startsWith("__");
-      if (activeId === id) activeId = isVirtual ? activeId : sessions[0]?.id ?? null;
+      const nextActive = s.activeSessionId === id ? sessions[0]?.id ?? null : s.activeSessionId;
       return {
         sessions,
-        activeId,
+        activeSessionId: nextActive,
+        activeId: s.activePanel === "chat" ? nextActive : s.activeId,
         messagesBySession: restMsgs,
         draftBySession: restDraft,
       };
@@ -262,6 +358,39 @@ export const useStore = create<StoreState>((set, get) => ({
   setDraft: (id, text) =>
     set((s) => ({ draftBySession: { ...s.draftBySession, [id]: text } })),
 
+  closeSession: async (id) => {
+    // 保存消息
+    const msgs = get().messagesBySession[id];
+    if (msgs && msgs.length > 0) {
+      const data = exportMessages(msgs);
+      if (data.length > 0) {
+        await window.sessionAPI.saveMessages(id, data);
+      }
+    }
+    // 触发主进程 kill（kill 时主进程会把会话移到 persistedSessions）
+    await window.sessionAPI.kill(id);
+    // 1800ms 后清理 sessions 中的条目（防止 IPC 事件尚未翻转）
+    setTimeout(() => {
+      const stillThere = useStore.getState().sessions.find((x) => x.id === id);
+      if (stillThere) useStore.getState().removeSession(id);
+      // 同步刷新历史
+      window.sessionAPI.historyList().then((list) =>
+        useStore.getState().setPersistedSessions(list)
+      );
+    }, 1800);
+  },
+
+  deletePersisted: async (id) => {
+    const state = get();
+    await window.sessionAPI.historyDelete(id);
+    set({
+      persistedSessions: state.persistedSessions.filter((p) => p.id !== id),
+      activePersistedId: state.activePersistedId === id ? null : state.activePersistedId,
+      activeId: state.activePersistedId === id ? null : state.activeId,
+    });
+  },
+
+  // ── 消息 actions ──
   addUserMessage: (sessionId, text) => {
     const id = nextId();
     set((s) => {
@@ -318,8 +447,6 @@ export const useStore = create<StoreState>((set, get) => ({
           | { role?: string; content?: unknown }
           | undefined;
         if (msg?.role === "assistant") {
-          // 用 message.content 初始化（若已是 partial 数组）。
-          // 若不是（罕见），从空起步，留给后续 message_update 重建。
           const content: ContentPart[] = Array.isArray(msg.content)
             ? (msg.content as ContentPart[])
             : [];
@@ -335,7 +462,6 @@ export const useStore = create<StoreState>((set, get) => ({
           });
           commit();
         } else if (msg?.role === "user") {
-          // 服务端回声 user 消息：确认乐观插入的那条
           for (let i = msgs.length - 1; i >= 0; i--) {
             if (msgs[i].role === "user" && msgs[i].pending) {
               msgs[i] = { ...msgs[i], pending: false };
@@ -343,10 +469,7 @@ export const useStore = create<StoreState>((set, get) => ({
               break;
             }
           }
-        } else if (msg?.role === "bashExecution") {
-          // 几乎不会通过 message_start 收到（bash 由 RPC 命令触发，不发 event）
         } else if (msg?.role === "toolResult") {
-          // 单独 toolResult message（pi 可能直接发 message_start，也可能在 turn_end 里给完整集合）
           const tr = msg as {
             toolCallId?: string;
             toolName?: string;
@@ -369,7 +492,6 @@ export const useStore = create<StoreState>((set, get) => ({
         const payload = event.message as
           | { role?: string; content?: unknown }
           | undefined;
-        // 始终以 partial.content 为真相来源。
         let target = lastStreamingAssistant(msgs);
         if (!target) {
           target = {
@@ -385,7 +507,6 @@ export const useStore = create<StoreState>((set, get) => ({
           const content = payload.content as ContentPart[];
           const derived = deriveAssistantFields(content);
           const targetIdx = msgs.lastIndexOf(target);
-          // 保留已附加的 result 字段——这些信息来自 tool_execution_end 等其他事件。
           const previousCalls = target.toolCalls ?? [];
           const mergedCalls = derived.toolCalls.map((c) => {
             const prev = previousCalls.find((p) => p.id === c.id);
@@ -405,7 +526,6 @@ export const useStore = create<StoreState>((set, get) => ({
       }
 
       case "message_end": {
-        // 校正（partial 仍为真相；只在 role 缺失时给默认值）。
         const msg = event.message as { role?: string } | undefined;
         if (msg?.role === "assistant") {
           const target = lastStreamingAssistant(msgs);
@@ -415,7 +535,6 @@ export const useStore = create<StoreState>((set, get) => ({
             commit();
           }
         } else if (msg?.role === "toolResult") {
-          // 已存在的 toolResult 消息：补填文本
           const tr = msg as {
             toolCallId?: string;
             toolName?: string;
@@ -464,7 +583,6 @@ export const useStore = create<StoreState>((set, get) => ({
       case "tool_execution_start": {
         const id = String(event.toolCallId ?? "");
         if (!id) break;
-        // 若已存在则标 running=true（幂等）
         const loc = locateToolCall(msgs, id);
         if (loc) {
           const { msgIdx, toolIdx } = loc;
@@ -542,7 +660,6 @@ export const useStore = create<StoreState>((set, get) => ({
           msgs[msgIdx] = { ...msgs[msgIdx], toolCalls: calls };
           commit();
         } else {
-          // 没找到归属的 assistant 消息：建一个孤立的 toolResult 气泡
           msgs.push({
             id: nextId(),
             role: "toolResult",
@@ -565,7 +682,6 @@ export const useStore = create<StoreState>((set, get) => ({
       case "turn_start":
       case "turn_end":
       case "extension_error":
-        // 状态机副作用在 SessionManager 中处理；这里无需操作消息流。
         break;
     }
   },
@@ -639,4 +755,15 @@ export const useStore = create<StoreState>((set, get) => ({
 
   removeAgent: (name) =>
     set((s) => ({ agents: s.agents.filter((x) => x.name !== name) })),
+
+  // ── 偏好 actions ──
+  toggleTheme: () => {
+    const next = get().theme === "dark" ? "light" : "dark";
+    document.body.dataset.theme = next;
+    set({ theme: next });
+  },
+
+  setSidebarSearch: (q) => set({ sidebarSearch: q }),
+
+  toggleStoppedGroup: () => set((s) => ({ showStoppedGroup: !s.showStoppedGroup })),
 }));
