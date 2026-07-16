@@ -1,0 +1,143 @@
+import { app, BrowserWindow, ipcMain } from "electron";
+import { join } from "path";
+import { homedir } from "os";
+import { statSync } from "fs";
+import { SessionManager } from "./session-manager";
+import { IPC, type StartSessionOpts } from "../shared/types";
+
+const sessionManager = new SessionManager();
+let mainWindow: BrowserWindow | null = null;
+
+function broadcast(channel: string, payload: unknown): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send(channel, payload);
+  }
+}
+
+function createWindow(): void {
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    backgroundColor: "#1a1a2e",
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  // 窗口关闭后释放引用，避免泄漏（reopen 时重新创建）
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+    mainWindow.webContents.openDevTools({ mode: "detach" });
+  } else if (!app.isPackaged) {
+    mainWindow.loadURL("http://localhost:5173");
+    mainWindow.webContents.openDevTools({ mode: "detach" });
+  } else {
+    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  }
+}
+
+// ── SessionManager 事件 -> 广播到渲染进程 ──
+sessionManager.on("spawned", (snap) => broadcast(IPC.sessionSpawned, snap));
+sessionManager.on("killed", (id) => broadcast(IPC.sessionKilled, id));
+sessionManager.on("change", (snap) => broadcast(IPC.sessionChange, snap));
+sessionManager.on("event", (payload) => broadcast(IPC.sessionEvent, payload));
+
+// ── Session IPC ──
+ipcMain.handle(IPC.sessionList, () => sessionManager.list());
+ipcMain.handle(IPC.sessionGet, (_e, id: string) => sessionManager.get(id) ?? null);
+
+ipcMain.handle(IPC.sessionStart, async (_e, opts: StartSessionOpts) => {
+  try {
+    const snap = await sessionManager.start(opts);
+    return { ok: true, session: snap };
+  } catch (e) {
+    console.error("[main] sessionStart:", e);
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.sessionPrompt, (_e, { id, message }: { id: string; message: string }) => {
+  try {
+    const r = sessionManager.prompt(id, message);
+    return { ok: true, ...r };
+  } catch (e) {
+    console.error("[main] sessionPrompt:", e);
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.sessionSteer, (_e, { id, message }: { id: string; message: string }) => {
+  try {
+    const r = sessionManager.steer(id, message);
+    return { ok: true, ...r };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.sessionAbort, async (_e, id: string) => {
+  await sessionManager.abort(id);
+  return { ok: true };
+});
+
+ipcMain.handle(IPC.sessionKill, async (_e, id: string) => {
+  await sessionManager.kill(id);
+  return { ok: true };
+});
+
+ipcMain.handle(IPC.sessionKillAll, async () => {
+  await sessionManager.killAll();
+  return { ok: true };
+});
+
+ipcMain.handle(IPC.sessionUpdateTitle, (_e, { id, title }: { id: string; title: string }) => {
+  const ok = sessionManager.updateTitle(id, title);
+  return { ok };
+});
+
+ipcMain.handle(IPC.sessionGetMessages, (_e, id: string) => sessionManager.getMessages(id));
+
+// ── App IPC ──
+ipcMain.handle(IPC.appGetModels, (_e, id?: string) => sessionManager.getModels(id));
+ipcMain.handle(IPC.appGetHomeDir, () => homedir());
+ipcMain.handle(IPC.appPathStat, (_e, p: string) => {
+  try {
+    const s = statSync(p);
+    if (!s.isDirectory()) return { ok: false, error: "不是目录" };
+    return { ok: true, isDirectory: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+// ── App 生命周期 ──
+app.whenReady().then(createWindow);
+
+// 所有窗口关闭后退出（macOS 除外，遵循 Electron 惯例）
+app.on("window-all-closed", async () => {
+  // 先回收所有子进程，再决定是否退出；killAll 出错也不阻塞 quit
+  try {
+    await sessionManager.killAll();
+  } catch (e) {
+    console.error("[main] killAll failed:", e);
+  }
+  if (process.platform !== "darwin") app.quit();
+});
+
+// 重新激活时若没有窗口则重建
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[main] uncaught:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[main] unhandledRejection:", reason);
+});

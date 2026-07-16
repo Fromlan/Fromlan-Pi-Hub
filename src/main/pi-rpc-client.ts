@@ -1,0 +1,268 @@
+import { spawn, spawnSync, type ChildProcess } from "child_process";
+import { EventEmitter } from "events";
+import { randomUUID } from "crypto";
+import * as fs from "fs";
+
+/** stdout 累积缓冲上限，防止故障子进程刷屏导致主进程 OOM。 */
+const MAX_BUFFER = 64 * 1024 * 1024;
+
+export interface PiRpcClientOptions {
+  provider: string;
+  model: string;
+  cwd?: string;
+  noSession?: boolean;
+  sessionId?: string;
+  env?: Record<string, string>;
+}
+
+interface ResolvedPi {
+  cmd: string;
+  useShell: boolean;
+}
+
+interface PendingWaiter {
+  resolve: (data: unknown) => void;
+  reject: (err: Error) => void;
+}
+
+/**
+ * 解析 pi 可执行文件路径与启动模式（缓存一次）。
+ *
+ * Windows：`where pi` 通常返回多行——无扩展名的 shell 脚本、`pi.cmd`、`pi.exe` 等。
+ * - `.exe` 可以 shell:false 直接执行（最安全，杜绝命令注入）；
+ * - `.cmd` / `.bat` 必须经 cmd.exe 解释，只能 shell:true；
+ * - 无扩展名文件用 shell:false 直接 spawn 会 ENOENT。
+ * 因此优先选 .exe（shell:false），否则退回 .cmd/.bat（shell:true）。
+ * 非 Windows：which 结果直接 shell:false。
+ * 全部失败：回退裸 "pi" + shell:true。
+ */
+let resolvedPi: ResolvedPi | undefined;
+function resolvePi(): ResolvedPi {
+  if (resolvedPi !== undefined) return resolvedPi;
+  const isWin = process.platform === "win32";
+  const finder = isWin ? "where" : "which";
+  try {
+    const out = spawnSync(finder, ["pi"], { encoding: "utf8" });
+    const lines = (out.stdout || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s && fs.existsSync(s));
+    if (isWin) {
+      const exe = lines.find((l) => /\.exe$/i.test(l));
+      if (exe) {
+        resolvedPi = { cmd: exe, useShell: false };
+        return resolvedPi;
+      }
+      const cmd = lines.find((l) => /\.(cmd|bat)$/i.test(l));
+      if (cmd) {
+        resolvedPi = { cmd, useShell: true };
+        return resolvedPi;
+      }
+    } else if (lines[0]) {
+      resolvedPi = { cmd: lines[0], useShell: false };
+      return resolvedPi;
+    }
+  } catch {
+    // fallthrough
+  }
+  resolvedPi = { cmd: "pi", useShell: true };
+  return resolvedPi;
+}
+
+/**
+ * 单个 pi --mode rpc 子进程的封装。
+ *
+ * 通过 stdin/stdout 收发 JSONL：
+ * - 命令带 id -> request/response（send 返回 Promise）
+ * - 无 id 的流式命令用 sendFireAndForget
+ * - 事件（无 id）通过 emit("event") 与 emit(type) 推给上层
+ */
+export class PiRpcClient extends EventEmitter {
+  private child: ChildProcess | null = null;
+  private buffer: Buffer = Buffer.alloc(0);
+  private pending = new Map<string, PendingWaiter>();
+  private closed = true;
+  private closePromise: Promise<void> | null = null;
+  private _pid?: number;
+
+  constructor(private opts: PiRpcClientOptions) {
+    super();
+    this.spawn();
+  }
+
+  private spawn(): void {
+    const args = [
+      "--mode",
+      "rpc",
+      "--provider",
+      this.opts.provider,
+      "--model",
+      this.opts.model,
+    ];
+    if (this.opts.noSession) args.push("--no-session");
+    if (this.opts.sessionId) args.push("--session", this.opts.sessionId);
+    // 禁掉主题/色彩，便于纯 JSONL 解析
+    args.push("--no-themes");
+
+    // API key 由 Pi 自己的 AuthStorage 从 ~/.pi/agent/auth.json 读取，
+    // 不通过环境变量覆盖（auth.json 优先级更高）。
+    const mergedEnv: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      ...(this.opts.env ?? {}),
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
+    };
+
+    const { cmd, useShell } = resolvePi();
+    this.child = spawn(cmd, args, {
+      cwd: this.opts.cwd,
+      env: mergedEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: useShell,
+      windowsHide: true,
+    });
+    this._pid = this.child.pid;
+    this.closed = false;
+
+    this.child.stdout!.on("data", (chunk: Buffer) => this.handleStdout(chunk));
+    this.child.stderr!.on("data", (chunk: Buffer) => {
+      this.emit("stderr", chunk.toString("utf8"));
+    });
+    this.child.on("exit", (code) => {
+      this.closed = true;
+      this.emit("exit", code);
+      for (const [id, p] of this.pending) {
+        p.reject(new Error(`Pi process exited (code=${code})`));
+        this.pending.delete(id);
+      }
+    });
+    this.child.on("error", (err) => {
+      this.emit("error", err);
+    });
+  }
+
+  private handleStdout(chunk: Buffer): void {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+    // 缓冲上限保护：超限说明子进程异常刷屏，丢弃缓冲并强制关闭，避免 OOM。
+    if (this.buffer.length > MAX_BUFFER) {
+      this.buffer = Buffer.alloc(0);
+      this.emit("error", new Error("Pi stdout buffer overflow, killing process"));
+      try {
+        this.child?.kill();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    // 严格 JSONL：仅以 \n 分帧，剥离尾部 \r。
+    let idx: number;
+    while ((idx = this.buffer.indexOf(0x0a)) !== -1) {
+      let line = this.buffer.subarray(0, idx).toString("utf8");
+      this.buffer = this.buffer.subarray(idx + 1);
+      if (line.endsWith("\r")) line = line.slice(0, -1);
+      if (line.length === 0) continue;
+      this.processLine(line);
+    }
+  }
+
+  private processLine(line: string): void {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      this.emit("parse-error", { line });
+      return;
+    }
+    if (parsed.type === "response" && typeof parsed.id === "string") {
+      const waiter = this.pending.get(parsed.id);
+      if (waiter) {
+        this.pending.delete(parsed.id);
+        if (parsed.success) waiter.resolve(parsed.data);
+        else waiter.reject(new Error((parsed.error as string) || "Unknown error"));
+      }
+      return;
+    }
+    this.emit("event", parsed);
+    if (typeof parsed.type === "string") this.emit(parsed.type, parsed);
+  }
+
+  /** 发送命令并等待响应（基于 id 的 request/response）。 */
+  send<T = unknown>(command: Record<string, unknown>, correlationId?: string): Promise<T> {
+    if (this.closed || !this.child?.stdin) {
+      return Promise.reject(new Error("Pi process has exited"));
+    }
+    const id = correlationId ?? randomUUID();
+    const payload = JSON.stringify({ ...command, id }) + "\n";
+    return new Promise<T>((resolve, reject) => {
+      this.pending.set(id, {
+        resolve: resolve as (data: unknown) => void,
+        reject,
+      });
+      try {
+        this.child!.stdin!.write(payload);
+      } catch (e) {
+        this.pending.delete(id);
+        reject(e as Error);
+      }
+    });
+  }
+
+  /** fire-and-forget：用于流式 prompt / steer / abort 等。 */
+  sendFireAndForget(command: Record<string, unknown>): void {
+    if (this.closed || !this.child?.stdin) {
+      throw new Error("Pi process has exited");
+    }
+    this.child.stdin.write(JSON.stringify(command) + "\n");
+  }
+
+  /** 优雅关闭（stdin EOF + 5s 兜底 kill）。 */
+  close(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    if (this.closePromise) return this.closePromise;
+    this.closePromise = new Promise<void>((resolve) => {
+      let settled = false;
+      const finalize = (reason: string) => {
+        if (settled) return;
+        settled = true;
+        this.closed = true;
+        // 即使从未收到 exit，也确保所有 pending 请求被 reject
+        for (const [id, p] of this.pending) {
+          p.reject(new Error(`Pi process closed (${reason})`));
+          this.pending.delete(id);
+        }
+        resolve();
+      };
+      // 多个事件路径都能收尾：exit 是正常路径，error/close 兜底解决悬挂
+      this.child!.once("exit", () => finalize("exit"));
+      this.child!.once("close", () => finalize("close"));
+      this.child!.once("error", (e) => {
+        this.emit("error", e);
+        finalize("error");
+      });
+      try {
+        this.child!.stdin!.end();
+      } catch {
+        // 子进程可能已死，忽略；兜底计时器会触发 kill
+      }
+      setTimeout(() => {
+        if (!settled && this.child && !this.child.killed) {
+          try {
+            this.child.kill();
+          } catch {
+            // kill 抛错时仍要走 finalize，避免 Promise 永久 pending
+            finalize("kill-failed");
+          }
+        }
+      }, 5000);
+    });
+    return this.closePromise;
+  }
+
+  get pid(): number | undefined {
+    return this._pid;
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+}
