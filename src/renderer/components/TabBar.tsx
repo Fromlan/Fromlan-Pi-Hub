@@ -1,20 +1,42 @@
-import { useStore } from "../store";
+import { useStore, exportMessages } from "../store";
 import { StatusBadge } from "./StatusBadge";
 
 export function TabBar({ onNew }: { onNew: () => void }) {
   const sessions = useStore((s) => s.sessions);
   const activeId = useStore((s) => s.activeId);
+  const persistedSessions = useStore((s) => s.persistedSessions);
   const setActive = useStore((s) => s.setActive);
+  const setPersistedSessions = useStore((s) => s.setPersistedSessions);
+  const removeSession = useStore((s) => s.removeSession);
 
   const close = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    // 触发主进程 kill；若已 exited，主进程会立即返回，但保险起见我们也移除 store 条目
+    // 关闭前保存消息
+    const msgs = useStore.getState().messagesBySession[id];
+    if (msgs && msgs.length > 0) {
+      const data = exportMessages(msgs);
+      if (data.length > 0) {
+        await window.sessionAPI.saveMessages(id, data);
+      }
+    }
+    // 触发主进程 kill（kill 时会将会话移到 persistedSessions）
     await window.sessionAPI.kill(id);
-    // 主进程会通过 onKilled 事件移除 store 条目；保险：若事件丢失，1800ms 后兜底移除
     setTimeout(() => {
       const s = useStore.getState().sessions.find((x) => x.id === id);
       if (s) useStore.getState().removeSession(id);
     }, 1800);
+  };
+
+  const deletePersisted = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    await window.sessionAPI.historyDelete(id);
+    setPersistedSessions(persistedSessions.filter((p) => p.id !== id));
+    if (activeId === id) setActive(null);
+    removeSession(id);
+  };
+
+  const selectPersisted = (id: string) => {
+    setActive(id);
   };
 
   return (
@@ -29,6 +51,20 @@ export function TabBar({ onNew }: { onNew: () => void }) {
           <StatusBadge status={s.status} />
           <span className="tab-title">{s.title}</span>
           <button className="tab-close" onClick={(e) => close(e, s.id)}>
+            ×
+          </button>
+        </div>
+      ))}
+      {persistedSessions.map((s) => (
+        <div
+          key={s.id}
+          className={`tab tab-stopped ${s.id === activeId ? "tab-active" : ""}`}
+          onClick={() => selectPersisted(s.id)}
+          title={`${s.provider} / ${s.model} · 已停止`}
+        >
+          <StatusBadge status="exited" />
+          <span className="tab-title">{s.title}</span>
+          <button className="tab-close" onClick={(e) => deletePersisted(e, s.id)}>
             ×
           </button>
         </div>

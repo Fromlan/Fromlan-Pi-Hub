@@ -294,6 +294,23 @@ body {
   background: var(--bg-list-hover);
 }
 
+/* ── 历史会话标签 ── */
+.tab-stopped {
+  opacity: 0.65;
+  font-style: italic;
+}
+
+.tab-stopped .tab-title::after {
+  content: " (已停止)";
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: normal;
+}
+
+.tab-stopped.tab-active {
+  opacity: 0.85;
+}
+
 /* ── 状态圆点 ── */
 .status-badge {
   display: inline-flex;
@@ -610,6 +627,17 @@ body {
   background: var(--accent-red);
   border-color: var(--accent-red);
   color: #fff;
+}
+
+.btn-resume {
+  background: var(--accent-green);
+  border-color: var(--accent-green);
+  color: var(--btn-success-text);
+}
+
+.btn-resume:hover:not(:disabled) {
+  filter: brightness(1.08);
+  border-color: var(--accent-green);
 }
 
 /* ── 弹窗 ── */

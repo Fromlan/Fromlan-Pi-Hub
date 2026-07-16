@@ -19,6 +19,12 @@ export const IPC = {
   appGetModels: "app:getModels",
   appGetHomeDir: "app:getHomeDir",
   appPathStat: "app:pathStat",
+  // 持久化类
+  sessionSaveMessages: "session:saveMessages",
+  historyList: "history:list",
+  historyGetMessages: "history:getMessages",
+  historyResume: "history:resume",
+  historyDelete: "history:delete",
   // 事件类（main -> renderer，send/on）
   sessionSpawned: "session:spawned",
   sessionKilled: "session:killed",
@@ -81,3 +87,20 @@ export interface SessionEventPayload {
 export type IpcResult<T> =
   | ({ ok: true } & T)
   | { ok: false; error: string };
+
+/** 序列化后的消息数据（不含运行时瞬态字段）。 */
+export interface ToolCallData {
+  id: string;
+  name: string;
+  args?: unknown;
+  result?: string;
+  isError?: boolean;
+}
+
+export interface MsgData {
+  id: string;
+  role: "user" | "assistant" | "tool";
+  text: string;
+  thinking?: string;
+  toolCalls?: ToolCallData[];
+}

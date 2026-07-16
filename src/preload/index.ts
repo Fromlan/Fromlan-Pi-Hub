@@ -6,6 +6,7 @@ import {
   type ModelInfo,
   type SessionEventPayload,
   type IpcResult,
+  type MsgData,
 } from "../shared/types";
 
 /** 包装 ipcRenderer.on，返回取消订阅函数（供 React useEffect 清理）。 */
@@ -36,6 +37,18 @@ const sessionAPI = {
     ipcRenderer.invoke(IPC.sessionUpdateTitle, { id, title }),
   getMessages: (id: string): Promise<unknown[]> =>
     ipcRenderer.invoke(IPC.sessionGetMessages, id),
+  // 持久化
+  saveMessages: (id: string, messages: MsgData[]): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.sessionSaveMessages, { id, messages }),
+  historyList: (): Promise<SessionSnapshot[]> =>
+    ipcRenderer.invoke(IPC.historyList),
+  historyGetMessages: (id: string): Promise<MsgData[]> =>
+    ipcRenderer.invoke(IPC.historyGetMessages, id),
+  historyResume: (id: string): Promise<IpcResult<{ session: SessionSnapshot }>> =>
+    ipcRenderer.invoke(IPC.historyResume, id),
+  historyDelete: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.historyDelete, id),
+  // 事件订阅
   onSpawned: (cb: (s: SessionSnapshot) => void) =>
     subscribe<SessionSnapshot>(IPC.sessionSpawned, cb),
   onKilled: (cb: (id: string) => void) => subscribe<string>(IPC.sessionKilled, cb),

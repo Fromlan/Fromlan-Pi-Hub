@@ -1,9 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useStore } from "../store";
+import { useShallow } from "zustand/react/shallow";
 import { MessageItem } from "./MessageItem";
 
 export function MessageList({ sessionId }: { sessionId: string }) {
-  const messages = useStore((s) => s.messagesBySession[sessionId] ?? []);
+  const messages = useStore(
+    useShallow((s) => s.messagesBySession[sessionId] ?? [])
+  );
   const bottomRef = useRef<HTMLDivElement>(null);
   // 标记本次 effect 是否因切换 session 而触发：切换时即时跳到底，
   // 同 session 累积消息时再平滑滚动，避免视觉错位。
