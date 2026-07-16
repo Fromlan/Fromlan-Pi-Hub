@@ -7,6 +7,10 @@ import {
   type SessionEventPayload,
   type IpcResult,
   type MsgData,
+  type PluginType,
+  type PluginItemMeta,
+  type PluginFile,
+  type PluginChangedPayload,
 } from "../shared/types";
 
 /** 包装 ipcRenderer.on，返回取消订阅函数（供 React useEffect 清理）。 */
@@ -71,8 +75,39 @@ const appAPI = {
     ipcRenderer.invoke(IPC.appPickDirectory),
 };
 
+/** 读取结果用判别联合：成功返回 PluginFile，失败返回 { ok:false, error }。 */
+type PluginReadResult = PluginFile | { ok: false; error: string };
+
+const pluginAPI = {
+  list: (type: PluginType): Promise<PluginItemMeta[]> =>
+    ipcRenderer.invoke(IPC.pluginList, type),
+  read: (type: PluginType, name: string): Promise<PluginReadResult> =>
+    ipcRenderer.invoke(IPC.pluginRead, type, name),
+  save: (
+    type: PluginType,
+    name: string,
+    body: string
+  ): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.pluginSave, type, name, body),
+  create: (
+    type: PluginType,
+    name: string,
+    body?: string
+  ): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.pluginCreate, type, name, body),
+  remove: (
+    type: PluginType,
+    name: string
+  ): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.pluginDelete, type, name),
+  onChanged: (cb: (p: PluginChangedPayload) => void) =>
+    subscribe<PluginChangedPayload>(IPC.pluginChanged, cb),
+};
+
 contextBridge.exposeInMainWorld("sessionAPI", sessionAPI);
 contextBridge.exposeInMainWorld("appAPI", appAPI);
+contextBridge.exposeInMainWorld("pluginAPI", pluginAPI);
 
 export type SessionAPI = typeof sessionAPI;
 export type AppAPI = typeof appAPI;
+export type PluginAPI = typeof pluginAPI;

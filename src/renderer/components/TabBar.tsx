@@ -1,4 +1,5 @@
 import { useStore, exportMessages } from "../store";
+import { PLUGIN_TAB_ID } from "../../shared/types";
 import { StatusBadge } from "./StatusBadge";
 
 export function TabBar({ onNew }: { onNew: () => void }) {
@@ -71,6 +72,14 @@ export function TabBar({ onNew }: { onNew: () => void }) {
       ))}
       <button className="tab-new" onClick={onNew} title="新建会话">
         ＋
+      </button>
+      <div className="tab-separator" />
+      <button
+        className={`tab tab-fixed ${activeId === PLUGIN_TAB_ID ? "tab-active" : ""}`}
+        onClick={() => setActive(PLUGIN_TAB_ID)}
+        title="管理 ~/.pi/agent/ 下的 prompt / skill / extension"
+      >
+        <span className="tab-title">⚙ 插件</span>
       </button>
     </div>
   );

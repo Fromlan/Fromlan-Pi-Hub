@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import type { SessionSnapshot, PiEvent, MsgData, ToolCallData } from "../shared/types";
+import type {
+  SessionSnapshot,
+  PiEvent,
+  MsgData,
+  ToolCallData,
+  PluginType,
+  PluginItemMeta,
+} from "../shared/types";
 
 /** pi content 数组中段项（宽松结构：text / thinking / toolCall）。 */
 export interface ContentPart {
@@ -59,6 +66,14 @@ interface StoreState {
   draftBySession: Record<string, string>;
   persistedSessions: SessionSnapshot[];
 
+  /** 虚拟 tab 保留 id：不参与 sessions 列表的覆盖与清空。 */
+  // 当前预留 "__plugins__"。store 层不强制用字面量，方便后续扩展。
+
+  /** 插件列表缓存：按 type 索引到该类型下所有条目。 */
+  plugins: Record<PluginType, PluginItemMeta[]>;
+  /** 顶部提示信息（保存后提示 /reload）。 */
+  lastNotice: string | null;
+
   setActive: (id: string | null) => void;
   upsertSession: (snap: SessionSnapshot) => void;
   removeSession: (id: string) => void;
@@ -73,6 +88,11 @@ interface StoreState {
   setPersistedSessions: (list: SessionSnapshot[]) => void;
   importMessages: (sessionId: string, msgs: MsgData[]) => void;
   resolvePersistedSession: (id: string) => void;
+
+  setPlugins: (type: PluginType, list: PluginItemMeta[]) => void;
+  upsertPlugin: (type: PluginType, meta: PluginItemMeta) => void;
+  removePlugin: (type: PluginType, name: string) => void;
+  setNotice: (text: string | null) => void;
 }
 
 let msgSeq = 0;
@@ -185,6 +205,8 @@ export const useStore = create<StoreState>((set, get) => ({
   messagesBySession: {},
   draftBySession: {},
   persistedSessions: [],
+  plugins: { prompts: [], skills: [], extensions: [] },
+  lastNotice: null,
 
   setActive: (id) => set({ activeId: id }),
 
@@ -217,7 +239,9 @@ export const useStore = create<StoreState>((set, get) => ({
       const { [id]: _drop, ...restMsgs } = s.messagesBySession;
       const { [id]: _d2, ...restDraft } = s.draftBySession;
       let activeId = s.activeId;
-      if (activeId === id) activeId = sessions[0]?.id ?? null;
+      // 虚拟 tab（以 "__" 开头）始终保留，不被 sessions 清空覆盖。
+      const isVirtual = typeof activeId === "string" && activeId.startsWith("__");
+      if (activeId === id) activeId = isVirtual ? activeId : sessions[0]?.id ?? null;
       return {
         sessions,
         activeId,
@@ -562,4 +586,29 @@ export const useStore = create<StoreState>((set, get) => ({
     set((s) => ({
       persistedSessions: s.persistedSessions.filter((p) => p.id !== id),
     })),
+
+  setPlugins: (type, list) =>
+    set((s) => ({ plugins: { ...s.plugins, [type]: list } })),
+
+  upsertPlugin: (type, meta) =>
+    set((s) => {
+      const list = s.plugins[type].slice();
+      const idx = list.findIndex((x) => x.name === meta.name);
+      if (idx >= 0) list[idx] = meta;
+      else {
+        list.push(meta);
+        list.sort((a, b) => a.name.localeCompare(b.name));
+      }
+      return { plugins: { ...s.plugins, [type]: list } };
+    }),
+
+  removePlugin: (type, name) =>
+    set((s) => ({
+      plugins: {
+        ...s.plugins,
+        [type]: s.plugins[type].filter((x) => x.name !== name),
+      },
+    })),
+
+  setNotice: (text) => set({ lastNotice: text }),
 }));

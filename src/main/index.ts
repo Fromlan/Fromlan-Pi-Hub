@@ -3,7 +3,8 @@ import { join } from "path";
 import { homedir } from "os";
 import { statSync } from "fs";
 import { SessionManager } from "./session-manager";
-import { IPC, type StartSessionOpts } from "../shared/types";
+import * as pluginManager from "./plugin-manager";
+import { IPC, type StartSessionOpts, type PluginType, type PluginChangedPayload } from "../shared/types";
 
 const sessionManager = new SessionManager();
 let mainWindow: BrowserWindow | null = null;
@@ -151,6 +152,58 @@ ipcMain.handle(IPC.appPickDirectory, async () => {
   });
   if (r.canceled || r.filePaths.length === 0) return null;
   return r.filePaths[0];
+});
+
+// ── Plugin IPC ──
+function broadcastPlugin(payload: PluginChangedPayload): void {
+  broadcast(IPC.pluginChanged, payload);
+}
+
+ipcMain.handle(IPC.pluginList, async (_e, type: PluginType) => {
+  try {
+    return await pluginManager.list(type);
+  } catch (e) {
+    console.error("[main] pluginList:", e);
+    return [] as Awaited<ReturnType<typeof pluginManager.list>>;
+  }
+});
+
+ipcMain.handle(IPC.pluginRead, (_e, type: PluginType, name: string) => {
+  try {
+    return pluginManager.read(type, name);
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.pluginSave, (_e, type: PluginType, name: string, body: string) => {
+  try {
+    pluginManager.save(type, name, body);
+    broadcastPlugin({ type, name, action: "saved" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.pluginCreate, (_e, type: PluginType, name: string, body?: string) => {
+  try {
+    pluginManager.create(type, name, body);
+    broadcastPlugin({ type, name, action: "created" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.pluginDelete, (_e, type: PluginType, name: string) => {
+  try {
+    pluginManager.remove(type, name);
+    broadcastPlugin({ type, name, action: "deleted" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 });
 
 // ── App 生命周期 ──

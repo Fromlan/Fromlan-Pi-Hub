@@ -4,6 +4,8 @@ import { TabBar } from "./components/TabBar";
 import { NewSessionDialog } from "./components/NewSessionDialog";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
+import { PluginsPanel } from "./components/PluginsPanel";
+import { PLUGIN_TAB_ID } from "../shared/types";
 
 export function App() {
   const sessions = useStore((s) => s.sessions);
@@ -12,10 +14,11 @@ export function App() {
   const [showNew, setShowNew] = useState(false);
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
+  const isPluginsTab = activeId === PLUGIN_TAB_ID;
 
   // 判断当前活跃的是否为"历史会话占位"（仅在 persistedSessions 中存在）
   const isPersistedActive =
-    !active && activeId != null && persistedSessions.some((p) => p.id === activeId);
+    !active && !isPluginsTab && activeId != null && persistedSessions.some((p) => p.id === activeId);
   const persistedActive = isPersistedActive
     ? persistedSessions.find((p) => p.id === activeId) ?? null
     : null;
@@ -57,7 +60,9 @@ export function App() {
     <div className="app">
       <TabBar onNew={() => setShowNew(true)} />
       <div className="main">
-        {active ? (
+        {isPluginsTab ? (
+          <PluginsPanel />
+        ) : active ? (
           <>
             <MessageList sessionId={active.id} />
             <Composer session={active} />
