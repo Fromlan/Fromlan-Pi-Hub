@@ -1,5 +1,5 @@
 import { useStore, exportMessages } from "../store";
-import { PLUGIN_TAB_ID } from "../../shared/types";
+import { AGENTS_TAB_ID, PLUGIN_TAB_ID } from "../../shared/types";
 import { StatusBadge } from "./StatusBadge";
 
 export function TabBar({ onNew }: { onNew: () => void }) {
@@ -74,6 +74,13 @@ export function TabBar({ onNew }: { onNew: () => void }) {
         ＋
       </button>
       <div className="tab-separator" />
+      <button
+        className={`tab tab-fixed ${activeId === AGENTS_TAB_ID ? "tab-active" : ""}`}
+        onClick={() => setActive(AGENTS_TAB_ID)}
+        title="管理 ~/.pi/agents/ 下每个 agent 独立的 prompts/skills/extensions"
+      >
+        <span className="tab-title">⚙ 代理</span>
+      </button>
       <button
         className={`tab tab-fixed ${activeId === PLUGIN_TAB_ID ? "tab-active" : ""}`}
         onClick={() => setActive(PLUGIN_TAB_ID)}

@@ -1,7 +1,9 @@
 import { spawn, spawnSync, type ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
-import * as fs from "fs";
+import { existsSync, readdirSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 
 /** stdout 累积缓冲上限，防止故障子进程刷屏导致主进程 OOM。 */
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -13,6 +15,14 @@ export interface PiRpcClientOptions {
   noSession?: boolean;
   sessionId?: string;
   env?: Record<string, string>;
+  /**
+   * 绑定的 agent 名称。设值后：
+   * - 自动追加 --no-extensions / --no-skills / --no-prompt-templates / --no-context-files
+   *   关闭全局与项目级发现，让 pi 子进程看不到 ~/.pi/agent/ 与 .pi/* 的内容；
+   * - 再显式注入 ~/.pi/agents/<name>/{prompts,skills,extensions}/ 下的文件。
+   * 留空则沿用 pi 默认行为（加载全局 + 当前 cwd 下的项目级）。
+   */
+  agentName?: string;
 }
 
 interface ResolvedPi {
@@ -46,7 +56,7 @@ function resolvePi(): ResolvedPi {
     const lines = (out.stdout || "")
       .split(/\r?\n/)
       .map((s) => s.trim())
-      .filter((s) => s && fs.existsSync(s));
+      .filter((s) => s && existsSync(s));
     if (isWin) {
       const exe = lines.find((l) => /\.exe$/i.test(l));
       if (exe) {
@@ -103,6 +113,38 @@ export class PiRpcClient extends EventEmitter {
     if (this.opts.sessionId) args.push("--session", this.opts.sessionId);
     // 禁掉主题/色彩，便于纯 JSONL 解析
     args.push("--no-themes");
+
+    // agent 隔离：关闭全局与项目级发现，再显式注入 agent 自己的 prompts/skills/extensions。
+    // 注意：必须在子进程 spawn 前同步完成（spawn() 非 async），所以用 readdirSync。
+    if (this.opts.agentName) {
+      const root = join(homedir(), ".pi", "agents", this.opts.agentName);
+      args.push(
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-context-files"
+      );
+      const pushDir = (
+        subdir: "prompts" | "skills" | "extensions",
+        flag: "--prompt-template" | "--skill" | "--extension",
+        accept: (entryName: string) => boolean
+      ): void => {
+        const dir = join(root, subdir);
+        let entries: string[];
+        try {
+          entries = readdirSync(dir);
+        } catch {
+          return;
+        }
+        for (const entry of entries) {
+          if (!accept(entry)) continue;
+          args.push(flag, join(dir, entry));
+        }
+      };
+      pushDir("prompts", "--prompt-template", (n) => n.endsWith(".md"));
+      pushDir("skills", "--skill", () => true);
+      pushDir("extensions", "--extension", (n) => n.endsWith(".ts"));
+    }
 
     // API key 由 Pi 自己的 AuthStorage 从 ~/.pi/agent/auth.json 读取，
     // 不通过环境变量覆盖（auth.json 优先级更高）。

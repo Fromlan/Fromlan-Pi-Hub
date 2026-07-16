@@ -6,6 +6,7 @@ import type {
   ToolCallData,
   PluginType,
   PluginItemMeta,
+  AgentMeta,
 } from "../shared/types";
 
 /** pi content 数组中段项（宽松结构：text / thinking / toolCall）。 */
@@ -74,6 +75,9 @@ interface StoreState {
   /** 顶部提示信息（保存后提示 /reload）。 */
   lastNotice: string | null;
 
+  /** Agent 列表。 */
+  agents: AgentMeta[];
+
   setActive: (id: string | null) => void;
   upsertSession: (snap: SessionSnapshot) => void;
   removeSession: (id: string) => void;
@@ -93,6 +97,10 @@ interface StoreState {
   upsertPlugin: (type: PluginType, meta: PluginItemMeta) => void;
   removePlugin: (type: PluginType, name: string) => void;
   setNotice: (text: string | null) => void;
+
+  setAgents: (list: AgentMeta[]) => void;
+  upsertAgent: (meta: AgentMeta) => void;
+  removeAgent: (name: string) => void;
 }
 
 let msgSeq = 0;
@@ -207,6 +215,7 @@ export const useStore = create<StoreState>((set, get) => ({
   persistedSessions: [],
   plugins: { prompts: [], skills: [], extensions: [] },
   lastNotice: null,
+  agents: [],
 
   setActive: (id) => set({ activeId: id }),
 
@@ -611,4 +620,23 @@ export const useStore = create<StoreState>((set, get) => ({
     })),
 
   setNotice: (text) => set({ lastNotice: text }),
+
+  setAgents: (list) =>
+    set((s) => ({
+      agents: list.slice().sort((a, b) => a.name.localeCompare(b.name)),
+    })),
+
+  upsertAgent: (meta) =>
+    set((s) => {
+      const idx = s.agents.findIndex((x) => x.name === meta.name);
+      const list =
+        idx === -1
+          ? [...s.agents, meta]
+          : s.agents.map((x) => (x.name === meta.name ? meta : x));
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      return { agents: list };
+    }),
+
+  removeAgent: (name) =>
+    set((s) => ({ agents: s.agents.filter((x) => x.name !== name) })),
 }));

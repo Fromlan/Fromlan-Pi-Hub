@@ -44,6 +44,7 @@ interface ManagedSession {
   piSessionId?: string;
   createdAt: number;
   lastActivityAt: number;
+  agentName?: string;
   client: PiRpcClient;
 }
 
@@ -66,6 +67,7 @@ export class SessionManager extends EventEmitter {
       model: opts.model,
       cwd: opts.cwd,
       noSession: opts.noSession ?? false,
+      agentName: opts.agentName,
     });
     const session: ManagedSession = {
       id,
@@ -78,6 +80,7 @@ export class SessionManager extends EventEmitter {
       pendingMessageCount: 0,
       createdAt: Date.now(),
       lastActivityAt: Date.now(),
+      agentName: opts.agentName,
       client,
     };
     this.sessions.set(id, session);
@@ -194,6 +197,7 @@ export class SessionManager extends EventEmitter {
       cwd: old.cwd,
       noSession: false,
       sessionId: old.piSessionId,
+      agentName: old.agentName,
     });
     const session: ManagedSession = {
       id,
@@ -206,6 +210,7 @@ export class SessionManager extends EventEmitter {
       pendingMessageCount: 0,
       createdAt: old.createdAt,
       lastActivityAt: Date.now(),
+      agentName: old.agentName,
       client,
     };
     this.sessions.set(id, session);
@@ -389,6 +394,7 @@ export class SessionManager extends EventEmitter {
       pid: s.client.pid,
       createdAt: s.createdAt,
       lastActivityAt: s.lastActivityAt,
+      agentName: s.agentName,
     };
   }
 }

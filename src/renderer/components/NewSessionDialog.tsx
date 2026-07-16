@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ModelInfo } from "../../shared/types";
+import type { ModelInfo, AgentMeta } from "../../shared/types";
 
 export function NewSessionDialog({ onClose }: { onClose: () => void }) {
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -8,15 +8,18 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
   const [modelId, setModelId] = useState("");
   const [cwd, setCwd] = useState("");
   const [title, setTitle] = useState("");
+  const [agents, setAgents] = useState<AgentMeta[]>([]);
+  const [agentName, setAgentName] = useState<string>(""); // "" = 全局
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [list, home] = await Promise.all([
+      const [list, home, agentList] = await Promise.all([
         window.appAPI.getModels(),
         window.appAPI.getHomeDir(),
+        window.agentAPI.list(),
       ]);
       if (!alive) return;
       setModels(list);
@@ -25,6 +28,7 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
         setProvider(list[0].provider);
         setModelId(list[0].id);
       }
+      setAgents(agentList);
       setLoading(false);
     })();
     return () => {
@@ -61,6 +65,7 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
       model: modelId,
       cwd: trimmedCwd || undefined,
       title: title.trim() || undefined,
+      agentName: agentName || undefined,
     });
     setStarting(false);
     if (r.ok) onClose();
@@ -103,6 +108,22 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
                 {modelsForProvider.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Agent
+              <select
+                value={agentName}
+                onChange={(e) => setAgentName(e.target.value)}
+                title="选择后将关闭全局 ~/.pi/agent/ 加载，只用该 agent 自己的 prompts/skills/extensions"
+              >
+                <option value="">（全局 ~/.pi/agent/）</option>
+                {agents.map((a) => (
+                  <option key={a.name} value={a.name}>
+                    {a.name}
+                    {a.description ? ` — ${a.description}` : ""}
                   </option>
                 ))}
               </select>

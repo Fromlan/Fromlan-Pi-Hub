@@ -4,7 +4,14 @@ import { homedir } from "os";
 import { statSync } from "fs";
 import { SessionManager } from "./session-manager";
 import * as pluginManager from "./plugin-manager";
-import { IPC, type StartSessionOpts, type PluginType, type PluginChangedPayload } from "../shared/types";
+import * as agentManager from "./agent-manager";
+import {
+  IPC,
+  type StartSessionOpts,
+  type PluginType,
+  type PluginChangedPayload,
+  type AgentChangedPayload,
+} from "../shared/types";
 
 const sessionManager = new SessionManager();
 let mainWindow: BrowserWindow | null = null;
@@ -200,6 +207,87 @@ ipcMain.handle(IPC.pluginDelete, (_e, type: PluginType, name: string) => {
   try {
     pluginManager.remove(type, name);
     broadcastPlugin({ type, name, action: "deleted" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+// ── Agent IPC ──
+function broadcastAgent(payload: AgentChangedPayload): void {
+  broadcast(IPC.agentChanged, payload);
+}
+
+ipcMain.handle(IPC.agentList, () => {
+  try {
+    return agentManager.list();
+  } catch (e) {
+    console.error("[main] agentList:", e);
+    return [];
+  }
+});
+
+ipcMain.handle(IPC.agentCreate, (_e, name: string, description?: string) => {
+  try {
+    const meta = agentManager.create(name, description);
+    broadcastAgent({ name, action: "created" });
+    return { ok: true, meta };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.agentDelete, (_e, name: string) => {
+  try {
+    agentManager.remove(name);
+    broadcastAgent({ name, action: "deleted" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.agentFileList, async (_e, name: string, type: PluginType) => {
+  try {
+    return await agentManager.listFiles(name, type);
+  } catch (e) {
+    console.error("[main] agentFileList:", e);
+    return [] as Awaited<ReturnType<typeof agentManager.listFiles>>;
+  }
+});
+
+ipcMain.handle(IPC.agentFileRead, (_e, name: string, type: PluginType, file: string) => {
+  try {
+    return agentManager.readFile(name, type, file);
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.agentFileSave, (_e, name: string, type: PluginType, file: string, body: string) => {
+  try {
+    agentManager.saveFile(name, type, file, body);
+    broadcastAgent({ name, type, action: "fileSaved" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.agentFileCreate, (_e, name: string, type: PluginType, file: string, body?: string) => {
+  try {
+    agentManager.createFile(name, type, file, body);
+    broadcastAgent({ name, type, action: "fileCreated" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.agentFileDelete, (_e, name: string, type: PluginType, file: string) => {
+  try {
+    agentManager.deleteFile(name, type, file);
+    broadcastAgent({ name, type, action: "fileDeleted" });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };

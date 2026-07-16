@@ -11,6 +11,8 @@ import {
   type PluginItemMeta,
   type PluginFile,
   type PluginChangedPayload,
+  type AgentMeta,
+  type AgentChangedPayload,
 } from "../shared/types";
 
 /** 包装 ipcRenderer.on，返回取消订阅函数（供 React useEffect 清理）。 */
@@ -104,10 +106,56 @@ const pluginAPI = {
     subscribe<PluginChangedPayload>(IPC.pluginChanged, cb),
 };
 
+/** 读取结果用判别联合：成功返回 PluginFile，失败返回 { ok:false, error }。 */
+type AgentFileResult = PluginFile | { ok: false; error: string };
+
+const agentAPI = {
+  list: (): Promise<AgentMeta[]> => ipcRenderer.invoke(IPC.agentList),
+  create: (
+    name: string,
+    description?: string
+  ): Promise<IpcResult<{ meta: AgentMeta }>> =>
+    ipcRenderer.invoke(IPC.agentCreate, name, description),
+  remove: (name: string): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.agentDelete, name),
+  fileList: (name: string, type: PluginType): Promise<PluginItemMeta[]> =>
+    ipcRenderer.invoke(IPC.agentFileList, name, type),
+  fileRead: (
+    name: string,
+    type: PluginType,
+    file: string
+  ): Promise<AgentFileResult> =>
+    ipcRenderer.invoke(IPC.agentFileRead, name, type, file),
+  fileSave: (
+    name: string,
+    type: PluginType,
+    file: string,
+    body: string
+  ): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.agentFileSave, name, type, file, body),
+  fileCreate: (
+    name: string,
+    type: PluginType,
+    file: string,
+    body?: string
+  ): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.agentFileCreate, name, type, file, body),
+  fileDelete: (
+    name: string,
+    type: PluginType,
+    file: string
+  ): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.agentFileDelete, name, type, file),
+  onChanged: (cb: (p: AgentChangedPayload) => void) =>
+    subscribe<AgentChangedPayload>(IPC.agentChanged, cb),
+};
+
 contextBridge.exposeInMainWorld("sessionAPI", sessionAPI);
 contextBridge.exposeInMainWorld("appAPI", appAPI);
 contextBridge.exposeInMainWorld("pluginAPI", pluginAPI);
+contextBridge.exposeInMainWorld("agentAPI", agentAPI);
 
 export type SessionAPI = typeof sessionAPI;
 export type AppAPI = typeof appAPI;
 export type PluginAPI = typeof pluginAPI;
+export type AgentAPI = typeof agentAPI;
