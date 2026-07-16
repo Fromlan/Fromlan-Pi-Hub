@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { join } from "path";
 import { homedir } from "os";
 import { statSync } from "fs";
@@ -139,6 +139,18 @@ ipcMain.handle(IPC.appPathStat, (_e, p: string) => {
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
+});
+
+// 唤起系统文件夹选择对话框；用户取消返回 null
+ipcMain.handle(IPC.appPickDirectory, async () => {
+  const win = BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
+  if (!win) return null;
+  const r = await dialog.showOpenDialog(win, {
+    title: "选择工作目录",
+    properties: ["openDirectory", "dontAddToRecent"],
+  });
+  if (r.canceled || r.filePaths.length === 0) return null;
+  return r.filePaths[0];
 });
 
 // ── App 生命周期 ──

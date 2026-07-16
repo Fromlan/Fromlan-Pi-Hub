@@ -66,6 +66,9 @@ const appAPI = {
     p: string
   ): Promise<{ ok: true; isDirectory: boolean } | { ok: false; error: string }> =>
     ipcRenderer.invoke(IPC.appPathStat, p),
+  /** 唤起系统文件夹选择对话框，用户取消返回 null。 */
+  pickDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.appPickDirectory),
 };
 
 contextBridge.exposeInMainWorld("sessionAPI", sessionAPI);

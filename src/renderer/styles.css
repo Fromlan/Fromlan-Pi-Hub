@@ -518,8 +518,31 @@ body {
   color: var(--text-secondary);
 }
 
+.toolcall-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
 .toolcall-toggle {
   margin-left: auto;
+}
+
+.toolcall-meta {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  border-top: 0.5px solid var(--border-primary);
+  font-family: var(--font-sans);
+}
+
+.toolcall-streaming {
+  opacity: 0.85;
 }
 
 .thinking-body,
@@ -695,6 +718,17 @@ body {
 .dialog input:focus {
   outline: none;
   border-color: var(--border-focus);
+}
+
+.dialog-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.dialog-row input {
+  flex: 1;
+  min-width: 0;
 }
 
 .modal-actions,

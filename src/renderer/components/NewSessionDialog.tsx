@@ -109,12 +109,24 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
             </label>
             <label>
               工作目录 (cwd)
-              <input
-                type="text"
-                value={cwd}
-                onChange={(e) => setCwd(e.target.value)}
-                placeholder="会话的工作目录"
-              />
+              <div className="dialog-row">
+                <input
+                  type="text"
+                  value={cwd}
+                  onChange={(e) => setCwd(e.target.value)}
+                  placeholder="会话的工作目录"
+                />
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={async () => {
+                    const picked = await window.appAPI.pickDirectory();
+                    if (picked) setCwd(picked);
+                  }}
+                >
+                  浏览…
+                </button>
+              </div>
             </label>
             <label>
               标题（可选）

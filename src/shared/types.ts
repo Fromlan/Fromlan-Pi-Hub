@@ -19,6 +19,7 @@ export const IPC = {
   appGetModels: "app:getModels",
   appGetHomeDir: "app:getHomeDir",
   appPathStat: "app:pathStat",
+  appPickDirectory: "app:pickDirectory",
   // 持久化类
   sessionSaveMessages: "session:saveMessages",
   historyList: "history:list",
