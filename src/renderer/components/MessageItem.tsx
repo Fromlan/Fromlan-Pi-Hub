@@ -2,6 +2,7 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { Loader2, XCircle, Wrench, Brain, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import type { Msg, ToolCallView, ContentPart } from "../store";
 
 /** 把 args 对象压缩成可读单行（隐藏过长的字符串）。 */
@@ -62,11 +63,19 @@ function ToolCallBlock({
     <div className={`bubble-tool ${call.isError ? "toolcall-error" : ""}`}>
       <button className="toolcall-head" onClick={() => setOpen((v) => !v)}>
         <span className="toolcall-icon">
-          {call.running && !finalText ? "⏳" : call.isError ? "✖" : "🛠"}
+          {call.running && !finalText ? (
+            <Loader2 size={13} className="spin" />
+          ) : call.isError ? (
+            <XCircle size={13} />
+          ) : (
+            <Wrench size={13} />
+          )}
         </span>
         <span className="toolcall-name">{call.name}</span>
         {summary && <span className="toolcall-summary">{summary}</span>}
-        <span className="toolcall-toggle">{open ? "▾" : "▸"}</span>
+        <span className="toolcall-toggle">
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </span>
       </button>
       {open && (
         <div className="toolcall-body">
@@ -80,12 +89,13 @@ function ToolCallBlock({
           {displayText && (
             <pre className={`toolcall-result${stillStreaming ? " toolcall-streaming" : ""}`}>
               {displayText}
-              {stillStreaming && <span className="cursor">▌</span>}
+              {stillStreaming && <span className="cursor">▍</span>}
             </pre>
           )}
           {call.truncated && (
             <div className="toolcall-meta">
-              ⚠ 输出已截断
+              <AlertTriangle size={11} />
+              输出已截断
               {call.fullOutputPath && ` — 完整日志：${call.fullOutputPath}`}
             </div>
           )}
@@ -153,8 +163,11 @@ function Thinking({ text }: { text: string }) {
   return (
     <div className="bubble-thinking">
       <button className="thinking-head" onClick={() => setOpen((v) => !v)}>
-        <span>💭 思考过程</span>
-        <span>{open ? "▾" : "▸"}</span>
+        <span className="thinking-head-label">
+          <Brain size={12} />
+          思考过程
+        </span>
+        <span>{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
       </button>
       {open && <pre className="thinking-body">{text}</pre>}
     </div>
@@ -292,10 +305,10 @@ export function MessageItem({ msg }: { msg: Msg }) {
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
             >
-              {msg.text || (msg.streaming ? "▌" : "")}
+              {msg.text || (msg.streaming ? "▍" : "")}
             </ReactMarkdown>
           </div>
-          {msg.streaming && msg.text && <span className="cursor">▌</span>}
+          {msg.streaming && msg.text && <span className="cursor">▍</span>}
         </div>
       </>
     );

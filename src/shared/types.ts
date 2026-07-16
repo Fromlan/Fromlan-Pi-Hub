@@ -89,11 +89,8 @@ export interface PluginChangedPayload {
   action: "saved" | "deleted" | "created";
 }
 
-/** 虚拟标签 id：以 "__" 开头以与真实会话 id 区分。 */
-export const PLUGIN_TAB_ID = "__plugins__";
-
-/** 虚拟标签 id：代理（agent）管理面板。 */
-export const AGENTS_TAB_ID = "__agents__";
+/** 主面板类型：与左侧 IconRail 的导航项一一对应。 */
+export type PanelKind = "chat" | "agents" | "plugins" | "settings";
 
 export type SessionStatus =
   | "starting"
