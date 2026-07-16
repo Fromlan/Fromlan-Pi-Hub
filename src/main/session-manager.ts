@@ -4,12 +4,14 @@ import { join } from "path";
 import { homedir } from "os";
 import { existsSync, readFileSync } from "fs";
 import { PiRpcClient } from "./pi-rpc-client";
+import * as persistence from "./persistence";
 import type {
   SessionSnapshot,
   SessionStatus,
   StartSessionOpts,
   ModelInfo,
   PiEvent,
+  MsgData,
 } from "../shared/types";
 
 /**
@@ -54,6 +56,7 @@ interface ManagedSession {
  */
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, ManagedSession>();
+  private _persistedSessions: SessionSnapshot[] = [];
 
   /** 创建一个新的 pi session 并等待其就绪。 */
   async start(opts: StartSessionOpts): Promise<SessionSnapshot> {
@@ -83,6 +86,15 @@ export class SessionManager extends EventEmitter {
     client.on("exit", () => {
       session.status = "exited";
       this.emit("change", this.toSnapshot(session));
+      // 进程意外退出时自动持久化；kill() 已从 sessions 中 delete 了条目，不会重复
+      if (this.sessions.has(id) && session.messageCount > 0) {
+        this.sessions.delete(id);
+        const snap = this.toSnapshot(session);
+        snap.status = "exited";
+        this._persistedSessions.push(snap);
+        persistence.saveSessions(this._persistedSessions);
+        this.emit("killed", id);
+      }
     });
 
     try {
@@ -141,14 +153,112 @@ export class SessionManager extends EventEmitter {
   async kill(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
-    await session.client.close();
+    // 先删除（这样 exit 回调看到 !this.sessions.has(id) 就不会重复持久化）
     this.sessions.delete(id);
+    await session.client.close();
+    // 保存到历史列表，标记为已退出
+    const snap = this.toSnapshot(session);
+    snap.status = "exited";
+    this._persistedSessions.push(snap);
+    persistence.saveSessions(this._persistedSessions);
     this.emit("killed", id);
   }
 
   async killAll(): Promise<void> {
     const ids = Array.from(this.sessions.keys());
     await Promise.all(ids.map((id) => this.kill(id)));
+  }
+
+  // ── 持久化 / 历史会话 ──
+
+  persistedSessions(): SessionSnapshot[] {
+    return this._persistedSessions;
+  }
+
+  loadPersisted(): void {
+    this._persistedSessions = persistence.loadSessions();
+  }
+
+  async resume(id: string): Promise<SessionSnapshot> {
+    // 从历史记录中找到对应会话元数据
+    const idx = this._persistedSessions.findIndex((s) => s.id === id);
+    if (idx === -1) throw new Error(`Persisted session ${id} not found`);
+    const old = this._persistedSessions[idx];
+
+    // 从历史移除
+    this._persistedSessions.splice(idx, 1);
+
+    const client = new PiRpcClient({
+      provider: old.provider,
+      model: old.model,
+      cwd: old.cwd,
+      noSession: false,
+      sessionId: old.piSessionId,
+    });
+    const session: ManagedSession = {
+      id,
+      provider: old.provider,
+      model: old.model,
+      cwd: old.cwd,
+      title: old.title,
+      status: "starting",
+      messageCount: old.messageCount,
+      pendingMessageCount: 0,
+      createdAt: old.createdAt,
+      lastActivityAt: Date.now(),
+      client,
+    };
+    this.sessions.set(id, session);
+
+    client.on("event", (event: PiEvent) => this.handleEvent(id, event));
+    client.on("exit", () => {
+      session.status = "exited";
+      this.emit("change", this.toSnapshot(session));
+      // 进程意外退出时自动持久化；kill() 已从 sessions 中 delete 了条目，不会重复
+      if (this.sessions.has(id) && session.messageCount > 0) {
+        this.sessions.delete(id);
+        const snap = this.toSnapshot(session);
+        snap.status = "exited";
+        this._persistedSessions.push(snap);
+        persistence.saveSessions(this._persistedSessions);
+        this.emit("killed", id);
+      }
+    });
+
+    try {
+      const state = await client.send<{
+        sessionId?: string;
+        messageCount?: number;
+        pendingMessageCount?: number;
+      }>({ type: "get_state" });
+      session.piSessionId = state?.sessionId;
+      session.messageCount = state?.messageCount ?? old.messageCount;
+      session.pendingMessageCount = state?.pendingMessageCount ?? 0;
+      session.status = "idle";
+    } catch {
+      session.status = "exited";
+    }
+
+    const snap = this.toSnapshot(session);
+    // 重新持久化会话列表（移除了该条目）
+    persistence.saveSessions(this._persistedSessions);
+    this.emit("spawned", snap);
+    this.emit("change", snap);
+    return snap;
+  }
+
+  getPersistedMessages(id: string): MsgData[] {
+    return persistence.loadMessages(id);
+  }
+
+  saveMessagesFromRenderer(id: string, messages: MsgData[]): void {
+    persistence.saveMessages(id, messages);
+  }
+
+  deletePersisted(id: string): void {
+    persistence.deleteSessionData(id);
+    this._persistedSessions = this._persistedSessions.filter((s) => s.id !== id);
+    persistence.saveSessions(this._persistedSessions);
   }
 
   updateTitle(id: string, title: string): boolean {

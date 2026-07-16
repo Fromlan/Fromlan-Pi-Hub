@@ -103,6 +103,31 @@ ipcMain.handle(IPC.sessionUpdateTitle, (_e, { id, title }: { id: string; title: 
 
 ipcMain.handle(IPC.sessionGetMessages, (_e, id: string) => sessionManager.getMessages(id));
 
+// ── 持久化 IPC ──
+ipcMain.handle(IPC.sessionSaveMessages, (_e, { id, messages }: { id: string; messages: unknown[] }) => {
+  sessionManager.saveMessagesFromRenderer(id, messages as any);
+  return { ok: true };
+});
+
+ipcMain.handle(IPC.historyList, () => sessionManager.persistedSessions());
+
+ipcMain.handle(IPC.historyGetMessages, (_e, id: string) => sessionManager.getPersistedMessages(id));
+
+ipcMain.handle(IPC.historyResume, async (_e, id: string) => {
+  try {
+    const snap = await sessionManager.resume(id);
+    return { ok: true, session: snap };
+  } catch (e) {
+    console.error("[main] historyResume:", e);
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.historyDelete, (_e, id: string) => {
+  sessionManager.deletePersisted(id);
+  return { ok: true };
+});
+
 // ── App IPC ──
 ipcMain.handle(IPC.appGetModels, (_e, id?: string) => sessionManager.getModels(id));
 ipcMain.handle(IPC.appGetHomeDir, () => homedir());
@@ -117,7 +142,10 @@ ipcMain.handle(IPC.appPathStat, (_e, p: string) => {
 });
 
 // ── App 生命周期 ──
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  sessionManager.loadPersisted();
+  createWindow();
+});
 
 // 所有窗口关闭后退出（macOS 除外，遵循 Electron 惯例）
 app.on("window-all-closed", async () => {

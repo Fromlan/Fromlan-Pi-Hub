@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SessionSnapshot, PiEvent } from "../shared/types";
+import type { SessionSnapshot, PiEvent, MsgData, ToolCallData } from "../shared/types";
 
 export interface ToolCallView {
   id: string;
@@ -26,6 +26,7 @@ interface StoreState {
   activeId: string | null;
   messagesBySession: Record<string, Msg[]>;
   draftBySession: Record<string, string>;
+  persistedSessions: SessionSnapshot[];
 
   setActive: (id: string | null) => void;
   upsertSession: (snap: SessionSnapshot) => void;
@@ -37,6 +38,10 @@ interface StoreState {
   removeMessage: (sessionId: string, msgId: string) => void;
   markMessageConfirmed: (sessionId: string, msgId: string) => void;
   applyEvent: (sessionId: string, event: PiEvent) => void;
+
+  setPersistedSessions: (list: SessionSnapshot[]) => void;
+  importMessages: (sessionId: string, msgs: MsgData[]) => void;
+  resolvePersistedSession: (id: string) => void;
 }
 
 let msgSeq = 0;
@@ -53,11 +58,47 @@ function lastStreamingAssistant(msgs: Msg[]): Msg | undefined {
   return undefined;
 }
 
+/** 从消息数组中导出可持久化的 MsgData（过滤瞬态字段）。 */
+export function exportMessages(msgs: Msg[]): MsgData[] {
+  return msgs
+    .filter((m) => !m.streaming && !m.pending)
+    .map((m) => ({
+      id: m.id,
+      role: m.role,
+      text: m.text,
+      ...(m.thinking ? { thinking: m.thinking } : {}),
+      ...(m.toolCalls && m.toolCalls.length > 0
+        ? {
+            toolCalls: m.toolCalls.map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              args: tc.args,
+              result: tc.result,
+              isError: tc.isError,
+            })),
+          }
+        : {}),
+    }));
+}
+
+/** 将 msgSeq 推进到超过所有已有消息 ID 的数值，避免重复 key。 */
+function bumpSeqForIds(...idSets: string[][]): void {
+  let max = msgSeq;
+  for (const ids of idSets) {
+    for (const id of ids) {
+      const n = parseInt(id.replace(/^\D+/, ""), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  }
+  msgSeq = max;
+}
+
 export const useStore = create<StoreState>((set, get) => ({
   sessions: [],
   activeId: null,
   messagesBySession: {},
   draftBySession: {},
+  persistedSessions: [],
 
   setActive: (id) => set({ activeId: id }),
 
@@ -74,10 +115,12 @@ export const useStore = create<StoreState>((set, get) => ({
         idx === -1
           ? [...s.sessions, snap]
           : s.sessions.map((x) => (x.id === snap.id ? snap : x));
+      // 只初始化没有消息数组的会话，保留已加载的历史消息
+      const hasMsgs = snap.id in s.messagesBySession;
       return {
         sessions,
         activeId: s.activeId ?? snap.id,
-        messagesBySession: s.messagesBySession[snap.id]
+        messagesBySession: hasMsgs
           ? s.messagesBySession
           : { ...s.messagesBySession, [snap.id]: [] },
       };
@@ -257,4 +300,33 @@ export const useStore = create<StoreState>((set, get) => ({
       }
     }
   },
+
+  setPersistedSessions: (list) => set({ persistedSessions: list }),
+
+  importMessages: (sessionId, msgs) =>
+    set((s) => {
+      const existing = s.messagesBySession[sessionId] ?? [];
+      // 以已有消息的 id 建集合，过滤重复
+      const existingIds = new Set(existing.map((m) => m.id));
+      const fresh = msgs.filter((m) => !existingIds.has(m.id));
+      if (fresh.length === 0) return {};
+      // 推进 msgSeq 避免与历史 ID 冲突
+      bumpSeqForIds(existing.map((m) => m.id), msgs.map((m) => m.id));
+      // 将历史消息转换为 Msg（含 toolCalls 转换）
+      const imported: Msg[] = fresh.map((m) => ({
+        ...m,
+        toolCalls: m.toolCalls?.map((tc) => ({ ...tc, running: false })),
+      }));
+      return {
+        messagesBySession: {
+          ...s.messagesBySession,
+          [sessionId]: [...imported, ...existing],
+        },
+      };
+    }),
+
+  resolvePersistedSession: (id) =>
+    set((s) => ({
+      persistedSessions: s.persistedSessions.filter((p) => p.id !== id),
+    })),
 }));
