@@ -153,11 +153,13 @@ export async function list(type: PluginType): Promise<PluginItemMeta[]> {
       if (type === "skills") {
         const skillPath = join(abs, "SKILL.md");
         if (existsSync(skillPath)) {
+          ensureSafeRealPath(type, skillPath);
           const text = readFileSync(skillPath, "utf8");
           frontmatter = parseFrontmatter(text).fields;
           size += text.length;
         }
       } else {
+        ensureSafeRealPath(type, abs);
         const text = readFileSync(abs, "utf8");
         frontmatter = parseFrontmatter(text).fields;
       }

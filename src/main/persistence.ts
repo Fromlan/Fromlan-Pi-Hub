@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { join } from "path";
-import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync, renameSync } from "fs";
 import type { SessionSnapshot } from "../shared/types";
 import type { MsgData } from "../shared/types";
 
@@ -25,11 +25,17 @@ function ensureDir(p: string): void {
   if (!existsSync(p)) mkdirSync(p, { recursive: true });
 }
 
+function atomicWrite(p: string, data: unknown): void {
+  const tmp = p + ".tmp";
+  writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  renameSync(tmp, p);
+}
+
 // ── 会话索引 ──
 
 export function saveSessions(sessions: SessionSnapshot[]): void {
   ensureDir(BASE);
-  writeFileSync(join(BASE, "sessions.json"), JSON.stringify(sessions, null, 2), "utf8");
+  atomicWrite(join(BASE, "sessions.json"), sessions);
 }
 
 export function loadSessions(): SessionSnapshot[] {

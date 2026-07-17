@@ -89,6 +89,7 @@ ipcMain.handle(IPC.sessionSteer, (_e, { id, message }: { id: string; message: st
     const r = sessionManager.steer(id, message);
     return { ok: true, ...r };
   } catch (e) {
+    console.error("[main] sessionSteer:", e);
     return { ok: false, error: (e as Error).message };
   }
 });
@@ -117,8 +118,13 @@ ipcMain.handle(IPC.sessionGetMessages, (_e, id: string) => sessionManager.getMes
 
 // ── 持久化 IPC ──
 ipcMain.handle(IPC.sessionSaveMessages, (_e, { id, messages }: { id: string; messages: unknown[] }) => {
-  sessionManager.saveMessagesFromRenderer(id, messages as any);
-  return { ok: true };
+  try {
+    sessionManager.saveMessagesFromRenderer(id, messages as any);
+    return { ok: true };
+  } catch (e) {
+    console.error("[main] sessionSaveMessages:", e);
+    return { ok: false, error: (e as Error).message };
+  }
 });
 
 ipcMain.handle(IPC.historyList, () => sessionManager.persistedSessions());
@@ -143,8 +149,13 @@ ipcMain.handle(IPC.historyResume, async (_e, id: string) => {
 });
 
 ipcMain.handle(IPC.historyDelete, (_e, id: string) => {
-  sessionManager.deletePersisted(id);
-  return { ok: true };
+  try {
+    sessionManager.deletePersisted(id);
+    return { ok: true };
+  } catch (e) {
+    console.error("[main] historyDelete:", e);
+    return { ok: false, error: (e as Error).message };
+  }
 });
 
 // ── App IPC ──

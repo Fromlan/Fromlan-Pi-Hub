@@ -122,6 +122,11 @@
   --scrollbar-thumb-hover: oklch(1 0 0 / 20%);
   --scrollbar-track: transparent;
 
+  /* 标题 / 标签文字在有色背景上的颜色 */
+  --text-on-tinted: oklch(1 0 0 / 70%);
+  --text-on-light-bg: oklch(0.18 0.005 286);
+  --text-on-dark-bg: oklch(0.98 0 0);
+
   /* ── 阶段 1: Issue 状态色(语义色,深色主题默认值) ── */
   --issue-status-backlog: oklch(0.62 0.01 286);
   --issue-status-todo: oklch(0.75 0.16 85);
@@ -164,6 +169,8 @@ body[data-theme="light"] {
   --accent-green: oklch(0.55 0.16 145);
   --accent-red: oklch(0.577 0.245 27.325);
   --accent-purple: oklch(0.5 0.18 300);
+  --accent-yellow: oklch(0.75 0.16 85);
+  --accent-gray: oklch(0.62 0.01 286);
 
   --border-primary: oklch(0.92 0.004 286.32);
   --border-input: oklch(0.88 0.005 286);
@@ -187,6 +194,10 @@ body[data-theme="light"] {
   --error-bg: oklch(0.94 0.05 22);
   --scrollbar-thumb: oklch(0 0 0 / 12%);
   --scrollbar-thumb-hover: oklch(0 0 0 / 22%);
+
+  --text-on-tinted: oklch(1 0 0 / 75%);
+  --text-on-light-bg: oklch(0.18 0.005 286);
+  --text-on-dark-bg: oklch(0.98 0 0);
 
   /* ── 阶段 1: 浅色主题覆盖 ── */
   --issue-status-backlog: oklch(0.55 0.01 286);
@@ -220,6 +231,7 @@ body {
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 13px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   transition: background-color 0.2s ease, color 0.2s ease;
 }
@@ -617,10 +629,11 @@ body {
 
 /* ── 主区 ── */
 .main {
-  flex: 1;
+  grid-area: main;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   background: var(--bg-main);
 }
 
@@ -677,7 +690,7 @@ body {
 }
 
 .bubble-user .bubble-role {
-  color: oklch(1 0 0 / 70%);
+  color: var(--text-on-tinted);
 }
 
 .bubble-user .plaintext {
@@ -817,12 +830,6 @@ body {
   }
 }
 
-.toolcall-meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
 .toolcall-name {
   font-family: var(--font-mono);
   color: var(--text-secondary);
@@ -844,6 +851,9 @@ body {
 }
 
 .toolcall-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 6px 10px;
   font-size: 11px;
   color: var(--text-muted);
@@ -876,7 +886,50 @@ body {
   border-top: 0.5px solid var(--border-primary);
 }
 
-/* ── 系统消息气泡 ── */
+/* ── StatusIcon 状态圆点 ── */
+.status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
+.status-icon-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-gray);
+}
+
+.status-icon-dot.status-starting { background: var(--accent-yellow); }
+.status-icon-dot.status-idle     { background: var(--accent-green); }
+.status-icon-dot.status-busy     { background: var(--accent-blue); }
+.status-icon-dot.status-compacting { background: var(--accent-purple); }
+.status-icon-dot.status-exited   { background: var(--accent-red); opacity: 0.6; }
+
+.status-icon-dot[data-pulse="true"] {
+  animation: pulse 1.2s ease-in-out infinite;
+  box-shadow: 0 0 0 0 oklch(from var(--accent-blue) l c h / 0.4);
+}
+
+@keyframes pulse {
+  0%   { opacity: 1; box-shadow: 0 0 0 0 oklch(from var(--accent-blue) l c h / 0.4); }
+  50%  { opacity: 0.55; box-shadow: 0 0 0 6px oklch(from var(--accent-blue) l c h / 0); }
+  100% { opacity: 1; box-shadow: 0 0 0 0 oklch(from var(--accent-blue) l c h / 0); }
+}
+
+/* ── bubble-result（独立 toolResult 卡片）── */
+.bubble-result {
+  align-self: flex-start;
+  max-width: 82%;
+}
+
+.bubble-result .bubble-tool {
+  border-left-color: var(--accent-green);
+}
 .bubble-system {
   align-self: center;
   background: transparent;
@@ -939,7 +992,7 @@ body {
   padding: 8px 16px;
   cursor: pointer;
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13px;
   align-self: flex-end;
   transition: background 0.12s, border-color 0.12s, opacity 0.12s;
 }
@@ -1013,19 +1066,30 @@ body {
   border-color: var(--accent-green);
 }
 
-/* ── 弹窗 ── */
-.modal-overlay,
-.dialog-overlay {
+/* ── 弹窗（PluginEditor / AgentFileEditor）── */
+.dialog-overlay,
+.modal-overlay {
   position: fixed;
   inset: 0;
   background: var(--overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   z-index: 100;
 }
 
-.modal,
+/* 旧版弹窗居中（PluginEditor / AgentFileEditor 使用） */
+.dialog-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 新版弹窗居中 + 毛玻璃（Issue Create Dialog 使用） */
+.modal-overlay {
+  display: grid;
+  place-items: center;
+  backdrop-filter: blur(2px);
+}
+
+/* 旧版弹窗卡片（PluginEditor / AgentFileEditor） */
 .dialog {
   background: var(--bg-modal);
   border: 0.5px solid var(--border-primary);
@@ -1037,6 +1101,16 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* 新版弹窗卡片（Issue Create Dialog） */
+.modal {
+  width: min(520px, 92vw);
+  background: var(--bg-modal);
+  border: 0.5px solid var(--border-input);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-sans);
 }
 
 .dialog h2 {
@@ -1074,6 +1148,10 @@ body {
   display: flex;
   gap: 8px;
   align-items: stretch;
+}
+
+.dialog-row .btn {
+  flex-shrink: 0;
 }
 
 .dialog-row input {
@@ -1705,27 +1783,8 @@ textarea.form-input {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   阶段 1：Issue Create Dialog（复用既有 .modal-overlay / .modal）
+   阶段 1：Issue Create Dialog（使用 .modal-overlay / .modal）
    ════════════════════════════════════════════════════════════════════════ */
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay-bg);
-  display: grid;
-  place-items: center;
-  z-index: 100;
-  backdrop-filter: blur(2px);
-}
-
-.modal {
-  width: min(520px, 92vw);
-  background: var(--bg-modal);
-  border: 0.5px solid var(--border-input);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
-  font-family: var(--font-sans);
-}
 
 .modal-head {
   display: flex;
@@ -2041,31 +2100,31 @@ textarea.form-input {
 
 .issue-status-pill.status-todo {
   background: var(--issue-status-todo);
-  color: oklch(0.18 0.005 286);
+  color: var(--text-on-light-bg);
 }
 .issue-status-pill.status-in_progress {
   background: var(--issue-status-in_progress);
-  color: oklch(0.98 0 0);
+  color: var(--text-on-dark-bg);
 }
 .issue-status-pill.status-in_review {
   background: var(--issue-status-in_review);
-  color: oklch(0.98 0 0);
+  color: var(--text-on-dark-bg);
 }
 .issue-status-pill.status-done {
   background: var(--issue-status-done);
-  color: oklch(0.18 0.005 286);
+  color: var(--text-on-light-bg);
 }
 .issue-status-pill.status-blocked {
   background: var(--issue-status-blocked);
-  color: oklch(0.98 0 0);
+  color: var(--text-on-dark-bg);
 }
 .issue-status-pill.status-backlog {
   background: var(--issue-status-backlog);
-  color: oklch(0.98 0 0);
+  color: var(--text-on-dark-bg);
 }
 .issue-status-pill.status-cancelled {
   background: var(--issue-status-cancelled);
-  color: oklch(0.98 0 0);
+  color: var(--text-on-dark-bg);
 }
 
 .issue-title-input {

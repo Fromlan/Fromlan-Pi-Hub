@@ -174,6 +174,13 @@ function Thinking({ text }: { text: string }) {
   );
 }
 
+/** 为 content 段生成稳定 key（避免流式场景数组变长时索引不稳导致 React reconciliation 异常）。 */
+function contentKey(part: ContentPart, i: number): string {
+  if (part.type === "toolCall" && part.id) return `tc-${part.id}`;
+  if (part.type === "thinking") return `th-${i}`;
+  return `t-${i}`;
+}
+
 /** 把 content 数组按段顺序渲染：thinking、toolCall、text。 */
 function renderContent(content: ContentPart[], toolCalls: ToolCallView[] | undefined) {
   const els: React.ReactNode[] = [];
@@ -189,7 +196,7 @@ function renderContent(content: ContentPart[], toolCalls: ToolCallView[] | undef
       if (textBuf) {
         const t = textBuf;
         els.push(
-          <div key={`t-${i}`} className="bubble bubble-text">
+          <div key={contentKey(part, i)} className="bubble bubble-text">
             <div className="markdown">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
@@ -210,7 +217,7 @@ function renderContent(content: ContentPart[], toolCalls: ToolCallView[] | undef
       if (textBuf) {
         const t = textBuf;
         els.push(
-          <div key={`t-${i}`} className="bubble bubble-text">
+          <div key={contentKey(part, i)} className="bubble bubble-text">
             <div className="markdown">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}

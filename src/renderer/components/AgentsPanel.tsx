@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useStore } from "../store";
 import type { PluginType, PluginItemMeta, AgentMeta } from "../../shared/types";
 import { AgentFileEditor } from "./AgentFileEditor";
+import { formatBytes } from "../../shared/utils";
 
 /** 三栏 tabs 的元信息；路径前缀改为 agent 私有目录。 */
 const TYPES: { type: PluginType; label: string; hint: (name: string) => string }[] = [
@@ -376,10 +377,4 @@ export function AgentsPanel() {
       </section>
     </div>
   );
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }

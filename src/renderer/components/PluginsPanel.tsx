@@ -3,6 +3,7 @@ import { useStore } from "../store";
 import { useShallow } from "zustand/react/shallow";
 import type { PluginType, PluginItemMeta } from "../../shared/types";
 import { PluginEditor } from "./PluginEditor";
+import { formatBytes } from "../../shared/utils";
 
 /** 顶部类型切换 tabs 的元信息。 */
 const TYPES: { type: PluginType; label: string; hint: string }[] = [
@@ -162,10 +163,4 @@ export function PluginsPanel() {
       )}
     </div>
   );
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }

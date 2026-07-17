@@ -117,6 +117,10 @@ export class PiRpcClient extends EventEmitter {
     // agent 隔离：关闭全局与项目级发现，再显式注入 agent 自己的 prompts/skills/extensions。
     // 注意：必须在子进程 spawn 前同步完成（spawn() 非 async），所以用 readdirSync。
     if (this.opts.agentName) {
+      // 校验 agentName 格式，防止通过构造特殊名称遍历任意目录
+      if (!/^[a-z0-9][a-z0-9-]*$/.test(this.opts.agentName) || this.opts.agentName.length > 32) {
+        throw new Error(`无效 agent 名称: ${this.opts.agentName}`);
+      }
       const root = join(homedir(), ".pi", "agents", this.opts.agentName);
       args.push(
         "--no-extensions",

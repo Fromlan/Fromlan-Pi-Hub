@@ -53,11 +53,10 @@ export function IconRail({ onNew }: Props) {
           {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
         </button>
         <button
-          className="iconrail-btn"
+          className={`iconrail-btn${activePanel === "settings" ? " iconrail-btn-active" : ""}`}
           onClick={() => setPanel("settings")}
-          title="设置（占位）"
+          title="设置"
           aria-label="设置"
-          disabled
         >
           <Settings size={16} />
         </button>

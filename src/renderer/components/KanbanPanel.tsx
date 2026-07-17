@@ -1,18 +1,8 @@
 import { useMemo, useState } from "react";
-import { useStore, groupByStatus, ISSUE_STATUSES } from "../store";
+import { useStore, groupByStatus, ISSUE_STATUSES, STATUS_LABEL } from "../store";
 import { IssueCard } from "./IssueCard";
 import { IssueCreateDialog } from "./IssueCreateDialog";
 import type { IssueStatus } from "../../shared/types";
-
-const STATUS_LABEL: Record<IssueStatus, string> = {
-  backlog: "Backlog",
-  todo: "To Do",
-  in_progress: "进行中",
-  in_review: "Review",
-  done: "完成",
-  blocked: "阻塞",
-  cancelled: "取消",
-};
 
 export function KanbanPanel() {
   const issues = useStore((s) => s.issues);
@@ -36,19 +26,19 @@ export function KanbanPanel() {
       .setStatus(id, target)
       .then((r) => {
         if (!r.ok) {
-          // 回滚
-          const now = useStore.getState().issues.find((i) => i.id === id);
-          if (now) {
-            useStore.getState().upsertIssue({ ...now, status: prevStatus });
+          // 仅回滚 status 字段，保留其他字段的服务器状态
+          const cur = useStore.getState().issues.find((i) => i.id === id);
+          if (cur) {
+            useStore.getState().upsertIssue({ ...cur, status: prevStatus, updatedAt: Date.now() });
           }
-          const msg = r.ok === false && "error" in r ? `改 status 失败: ${r.error}` : "改 status 失败";
+          const msg = "error" in r ? `改 status 失败: ${r.error}` : "改 status 失败";
           useStore.getState().setNotice(msg);
         }
       })
       .catch((e) => {
-        const now = useStore.getState().issues.find((i) => i.id === id);
-        if (now) {
-          useStore.getState().upsertIssue({ ...now, status: prevStatus });
+        const cur = useStore.getState().issues.find((i) => i.id === id);
+        if (cur) {
+          useStore.getState().upsertIssue({ ...cur, status: prevStatus, updatedAt: Date.now() });
         }
         useStore
           .getState()

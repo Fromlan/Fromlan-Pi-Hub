@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, renameSync } from "fs";
 import { join } from "path";
 import { getBaseDir } from "./persistence";
 import type { AgentMeta } from "../shared/types";
@@ -11,6 +11,12 @@ import type { AgentMeta } from "../shared/types";
  */
 
 const FILE = join(getBaseDir(), "agents.json");
+
+function atomicWrite(p: string, data: unknown): void {
+  const tmp = p + ".tmp";
+  writeFileSync(tmp, JSON.stringify(data, null, 2), "utf8");
+  renameSync(tmp, p);
+}
 
 export function loadAgents(): AgentMeta[] {
   if (!existsSync(FILE)) return [];
@@ -25,5 +31,5 @@ export function loadAgents(): AgentMeta[] {
 }
 
 export function saveAgents(list: AgentMeta[]): void {
-  writeFileSync(FILE, JSON.stringify(list, null, 2), "utf8");
+  atomicWrite(FILE, list);
 }

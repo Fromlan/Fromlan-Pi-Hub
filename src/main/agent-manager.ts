@@ -248,11 +248,13 @@ export async function listFiles(name: string, type: PluginType): Promise<PluginI
       if (type === "skills") {
         const skillPath = join(abs, "SKILL.md");
         if (existsSync(skillPath)) {
+          ensureSafeRealPath(name, type, skillPath);
           const text = readFileSync(skillPath, "utf8");
           frontmatter = parseFrontmatter(text).fields;
           size += text.length;
         }
       } else {
+        ensureSafeRealPath(name, type, abs);
         const text = readFileSync(abs, "utf8");
         frontmatter = parseFrontmatter(text).fields;
       }

@@ -907,6 +907,17 @@ export const ISSUE_STATUSES: IssueStatus[] = [
   "cancelled",
 ];
 
+/** 状态中文标签 */
+export const STATUS_LABEL: Record<IssueStatus, string> = {
+  backlog: "Backlog",
+  todo: "To Do",
+  in_progress: "进行中",
+  in_review: "Review",
+  done: "完成",
+  blocked: "阻塞",
+  cancelled: "取消",
+};
+
 /** 按 status 分组（每组内按 updatedAt 倒序）。 */
 export function groupByStatus(
   issues: Issue[]

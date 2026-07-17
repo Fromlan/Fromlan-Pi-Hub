@@ -325,6 +325,10 @@ export class SessionManager extends EventEmitter {
     const providers = readConfiguredProviders();
     for (const provider of providers) {
       const probe = new PiRpcClient({ provider, model: "*", noSession: true });
+      probe.on("error", (err) => {
+        // 必须订阅 error 事件，防止 EventEmitter 在无监听器时抛未捕获异常带崩主进程
+        console.error(`[pi-rpc probe ${provider}] error:`, err);
+      });
       try {
         const models = await this.queryModels(probe);
         if (models.length > 0) return models;

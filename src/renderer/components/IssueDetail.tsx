@@ -1,23 +1,12 @@
 import { useEffect, useState } from "react";
-import { useStore } from "../store";
+import { useStore, ISSUE_STATUSES, STATUS_LABEL } from "../store";
 import { IssueKey } from "./IssueKey";
 import { PriorityBadge } from "./PriorityBadge";
 import { AssigneePicker } from "./AssigneePicker";
 import { NewSessionDialog } from "./NewSessionDialog";
-import { ISSUE_STATUSES } from "../store";
 import type { Issue, IssueStatus, IssuePriority } from "../../shared/types";
 
 const PRIORITIES: IssuePriority[] = ["urgent", "high", "medium", "low"];
-
-const STATUS_LABEL: Record<IssueStatus, string> = {
-  backlog: "Backlog",
-  todo: "To Do",
-  in_progress: "进行中",
-  in_review: "Review",
-  done: "完成",
-  blocked: "阻塞",
-  cancelled: "取消",
-};
 
 const EMPTY_COMMENTS: import("../../shared/types").Comment[] = [];
 
@@ -61,9 +50,15 @@ export function IssueDetail() {
   }
 
   const update = (patch: Partial<Issue>) => {
+    const prev = { ...issue };
     const next: Issue = { ...issue, ...patch, updatedAt: Date.now() };
     upsertIssue(next);
-    window.issueAPI.update(issue.id, patch);
+    window.issueAPI.update(issue.id, patch).then((r) => {
+      if (!r.ok) {
+        // 服务器拒绝，回滚到更新前状态
+        upsertIssue({ ...prev, updatedAt: Date.now() });
+      }
+    });
   };
 
   const submitComment = async () => {
