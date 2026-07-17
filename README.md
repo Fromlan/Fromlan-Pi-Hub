@@ -2,16 +2,13 @@
   Fromlan Pi Hub README
   中文为主，英文为副。不展示目录结构。
 -->
-
-<p align="center">
-  <img src="assets/banner.jpg" alt="Fromlan Pi Hub — Multi-session RPC client for pi" width="100%">
-</p>
-
 # Fromlan Pi Hub
 
 > **Windows 上的本地 AI Agent 工作站。**
 > — 在自己的机器上，构建、管理、调度自主 AI Agent。
-
+<p align="center">
+  <img src="assets/banner.jpg" alt="Fromlan Pi Hub — Multi-session RPC client for pi" width="100%">
+</p>
 **中文** · [English](#fromlan-pi-hub-1)
 
 ---
