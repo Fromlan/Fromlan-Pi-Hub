@@ -270,7 +270,9 @@ body {
 .chat-layout {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   grid-template-areas: "sidebar chatmain";
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -641,7 +643,7 @@ body {
 
 /* ── 主区 ── */
 .main {
-  grid-area: main;
+  grid-area: chatmain;
   display: flex;
   flex-direction: column;
   min-height: 0;

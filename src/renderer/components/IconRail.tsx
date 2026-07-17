@@ -1,5 +1,5 @@
 import { useStore } from "../store";
-import { Plus, Users, Plug, Sun, Moon, Settings } from "lucide-react";
+import { Plus, Users, Plug, LayoutDashboard, Sun, Moon, Settings } from "lucide-react";
 
 interface Props {
   onNew: () => void;
@@ -7,9 +7,13 @@ interface Props {
 
 export function IconRail({ onNew }: Props) {
   const activePanel = useStore((s) => s.activePanel);
+  const viewMode = useStore((s) => s.viewMode);
   const setPanel = useStore((s) => s.setPanel);
+  const setViewMode = useStore((s) => s.setViewMode);
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
+
+  const isKanban = activePanel === "chat" && viewMode === "kanban";
 
   return (
     <nav className="iconrail">
@@ -25,6 +29,14 @@ export function IconRail({ onNew }: Props) {
       </div>
 
       <div className="iconrail-mid">
+        <button
+          className={`iconrail-btn${isKanban ? " iconrail-btn-active" : ""}`}
+          onClick={() => setViewMode("kanban")}
+          title="看板 (Kanban)"
+          aria-label="看板"
+        >
+          <LayoutDashboard size={16} />
+        </button>
         <button
           className={`iconrail-btn${activePanel === "agents" ? " iconrail-btn-active" : ""}`}
           onClick={() => setPanel("agents")}
