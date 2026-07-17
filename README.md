@@ -1,179 +1,14 @@
 <!--
   Fromlan Pi Hub README
-  双语：英文在前，中文在后。不展示目录结构。
+  中文为主，英文为副。不展示目录结构。
 -->
-
-# Fromlan Pi Hub
-
-> **The local-first AI agent workstation for Windows.**
-> — Build, manage, and orchestrate autonomous AI agents on your own machine.
-
-**English** · [中文](#fromlan-pi-hub-1)
-
----
-
-## What Is This?
-
-Fromlan Pi Hub is a **desktop workstation for AI agents**, not a chat client. It wraps the [pi](https://pi.dev) CLI behind a native Windows GUI, letting you spin up multiple isolated agent sessions, track their work on a Kanban board, dispatch tasks through Squads, and schedule recurring jobs — all running locally on your machine, with your own API keys.
-
-Think of it as **"Multica, but single-machine, pi-only, desktop-native."**
-
-### The Philosophy
-
-AI coding agents are powerful, but a terminal-only workflow collapses under scale. Once you're juggling multiple agents, multiple tasks, and multiple skill sets, you need more than a command line — you need a **console**. Fromlan Pi Hub is that console:
-
-- **Agent = first-class citizen.** An agent isn't a tool you call; it's a teammate you assign work to. It reads the brief, picks the right approach, executes, and reports back.
-- **Task-oriented, not message-oriented.** The default view is a Kanban board of issues — *what needs doing* — not an infinite scroll of chat history.
-- **Squad routing.** A lead agent can inspect an issue, decide which specialist is best suited, and `@`-mention them to spawn follow-up sessions. Like a real team, without the meetings.
-- **Autopilot.** Cron-driven recurring tasks: "every weekday at 9am, scan the repo for stale PRs and comment on them."
-- **Pure local, zero cloud.** Your code, your keys, your machine. No telemetry, no middleware, no SaaS. The API keys never leave your `~/.pi/agent/auth.json`.
-
----
-
-## Architecture
-
-Fromlan Pi Hub uses a **three-process model** designed for process isolation and crash resilience:
-
-```
-┌──────────────────────────────────────────────────┐
-│  Renderer (React 19 + Zustand)                    │
-│  Kanban · Issue Detail · MessageList · Composer   │
-│  store.applyEvent — incremental stream stitching  │
-└──────────────────┬───────────────────────────────┘
-                   │ contextBridge (preload)
-                   │ sessionAPI / appAPI / pluginAPI / agentAPI / issueAPI
-┌──────────────────┴───────────────────────────────┐
-│  Main Process (Electron)                          │
-│  ipcMain.handle  +  event broadcast               │
-│                                                   │
-│  SessionManager — multi-session state machine      │
-│  PiRpcClient — one per session                    │
-│  IssueStore / AgentManager / PluginManager         │
-│  TaskMonitor / SquadManager / AutopilotManager     │
-└──────────────────┬───────────────────────────────┘
-                   │ stdin/stdout (JSONL)
-          ┌────────┴────────┐  ┌────────────────┐
-          │ pi --mode rpc   │  │ pi --mode rpc  │  …
-          │ (session A)     │  │ (session B)     │
-          └─────────────────┘  └────────────────┘
-```
-
-### Key Design Decisions
-
-**Pi is external, never embedded.** The app spawns `pi --mode rpc` as a child process and communicates over stdin/stdout JSONL. This means:
-- pi updates independently — no app rebuild needed.
-- API keys stay in `~/.pi/agent/auth.json`, never touched by the GUI.
-- Crash isolation: a dead pi process kills one session, not the whole app.
-
-**One session = one pi process.** Each conversation tab gets its own subprocess with its own working directory, agent binding, and environment. Sessions don't share state, and closing a tab kills only that process.
-
-**Agent isolation via CLI flags.** When a session binds to an agent, pi is launched with `--no-extensions --no-skills --no-prompt-templates --no-context-files`, then the agent's specific plugins are explicitly injected. This guarantees the session sees only the agent's toolkit — nothing from global config leaks in.
-
-**Env whitelist, not passthrough.** Parent process environment variables are NOT forwarded to pi children — only a strict allowlist of system paths is copied. All `*_API_KEY*`, `*_SECRET*`, `*_TOKEN*` patterns are stripped from any explicit `env` overrides. No credential leak through forking.
-
-**Issue → Session = 1:N.** An issue is a unit of work; sessions are execution attempts. One issue can spawn multiple sessions (retries, alternative approaches, follow-ups). The Kanban board is the source of truth — chats are execution logs.
-
----
-
-## Features
-
-### Current (v0.4.0)
-- **Multi-session management** — spawn, monitor, abort, and close independent pi sessions
-- **Kanban board** — 7-column issue tracker (backlog → todo → in_progress → in_review → done / blocked / cancelled)
-- **Issue detail view** — metadata, assignee picker, comment timeline, one-click "Run" to spawn a session
-- **Streaming Markdown rendering** — real-time assistant output with code highlighting, thinking fold, tool call visualization
-- **Agent management** — create/edit/delete isolated agents with private prompts, skills, and extensions
-- **Plugin editor** — CRUD for global prompt templates, skills, and extensions under `~/.pi/agent/`
-- **Dark-first dual-theme** — OKLCH color space, Inter + Geist Mono fonts, no external network dependency
-
-### Roadmap
-| Stage | Theme | Status |
-|-------|-------|--------|
-| v0.4.0 | Issue + Kanban | ✅ Released |
-| v0.5.0 | Task timeout / retry / rollback | Planned |
-| v0.6.0 | Squad routing (leader agent dispatches to specialists) | Planned |
-| v0.7.0 | Agent Skills standard alignment (SKILL.md) | Planned |
-| v0.8.0 | Autopilot cron scheduling | Planned |
-| v0.9.0 | Inbox + desktop notifications | Planned |
-| v1.0.0 | GA — "Multica local standalone" | Target |
-
-### Explicitly Out of Scope
-- Multi-CLI support — **pi only**, by design
-- Cloud runtimes, WebSocket queues, multi-user collaboration
-- Remote `/reload` injection (we prompt the user to reload manually)
-
----
-
-## Prerequisites
-
-| Dependency | Version | Why |
-|------------|---------|-----|
-| [Node.js](https://nodejs.org) | ≥ 18 | Runtime & build |
-| [pi](https://pi.dev) | ≥ 0.80.6 | Must be on PATH; the app calls `where pi` at startup |
-| API key | — | Configured via pi's own `auth.json` at `~/.pi/agent/auth.json` |
-
-> **This app does not ship pi and does not handle API keys.** If `pi --print "hello"` doesn't work in your terminal, the app won't work either.
-
----
-
-## Quick Start
-
-```bash
-git clone https://github.com/Fromlan/Fromlan-Pi-Hub.git
-cd Fromlan-Pi-Hub
-
-npm install
-npm run dev       # dev mode with HMR + DevTools
-npm run dist      # portable .exe → release/
-npm run typecheck # full type check
-```
-
----
-
-## Tech Stack
-
-- **Runtime**: Electron 33 + electron-vite
-- **UI**: React 19 + TypeScript + Zustand 5
-- **Markdown**: react-markdown + remark-gfm + rehype-highlight
-- **Icons**: lucide-react (no emoji)
-- **Packaging**: electron-builder (Windows portable `.exe`)
-- **Subprocess**: pi RPC mode (stdin/stdout JSONL framing)
-
----
-
-## FAQ
-
-**"No available models" when creating a session?**
-pi has no valid API key configured. Run `pi` in a terminal first to complete provider login.
-
-**Assistant returns empty or nothing?**
-Likely a dead API key or quota exhaustion. Verify with `pi --print "test"`.
-
-**"Red error" flashes and message stays in input?**
-The message failed to deliver to the pi process (process died or stdin closed). The text is preserved — just retry.
-
-**Can't find pi?**
-Ensure pi is globally installed and `where pi` (Windows) returns a path. The app prefers `.exe` over `.cmd/.bat` for security.
-
----
-
-## Reference
-
-- [pi Documentation](https://pi.dev/docs/latest)
-- [pi RPC Mode](https://pi.dev/docs/latest/rpc)
-- [Anthropic Agent Skills Standard](https://agentskills.io)
-- [Multica](https://github.com/multica-ai/multica) — design inspiration
-- [DESIGN.md](./DESIGN.md) — visual design system
-- [ROADMAP.md](./ROADMAP.md) — full iteration plan
-
----
 
 # Fromlan Pi Hub
 
 > **Windows 上的本地 AI Agent 工作站。**
 > — 在自己的机器上，构建、管理、调度自主 AI Agent。
 
-[English](#fromlan-pi-hub) · **中文**
+**中文** · [English](#fromlan-pi-hub-1)
 
 ---
 
@@ -330,3 +165,168 @@ pi 未配置有效密钥。请先在命令行运行 `pi` 完成 provider 登录�
 - [Multica](https://github.com/multica-ai/multica) — 设计灵感来源
 - [DESIGN.md](./DESIGN.md) — 视觉设计系统
 - [ROADMAP.md](./ROADMAP.md) — 完整迭代路线图
+
+---
+
+# Fromlan Pi Hub
+
+> **The local-first AI agent workstation for Windows.**
+> — Build, manage, and orchestrate autonomous AI agents on your own machine.
+
+[中文](#fromlan-pi-hub) · **English**
+
+---
+
+## What Is This?
+
+Fromlan Pi Hub is a **desktop workstation for AI agents**, not a chat client. It wraps the [pi](https://pi.dev) CLI behind a native Windows GUI, letting you spin up multiple isolated agent sessions, track their work on a Kanban board, dispatch tasks through Squads, and schedule recurring jobs — all running locally on your machine, with your own API keys.
+
+Think of it as **"Multica, but single-machine, pi-only, desktop-native."**
+
+### The Philosophy
+
+AI coding agents are powerful, but a terminal-only workflow collapses under scale. Once you're juggling multiple agents, multiple tasks, and multiple skill sets, you need more than a command line — you need a **console**. Fromlan Pi Hub is that console:
+
+- **Agent = first-class citizen.** An agent isn't a tool you call; it's a teammate you assign work to. It reads the brief, picks the right approach, executes, and reports back.
+- **Task-oriented, not message-oriented.** The default view is a Kanban board of issues — *what needs doing* — not an infinite scroll of chat history.
+- **Squad routing.** A lead agent can inspect an issue, decide which specialist is best suited, and `@`-mention them to spawn follow-up sessions. Like a real team, without the meetings.
+- **Autopilot.** Cron-driven recurring tasks: "every weekday at 9am, scan the repo for stale PRs and comment on them."
+- **Pure local, zero cloud.** Your code, your keys, your machine. No telemetry, no middleware, no SaaS. The API keys never leave your `~/.pi/agent/auth.json`.
+
+---
+
+## Architecture
+
+Fromlan Pi Hub uses a **three-process model** designed for process isolation and crash resilience:
+
+```
+┌──────────────────────────────────────────────────┐
+│  Renderer (React 19 + Zustand)                    │
+│  Kanban · Issue Detail · MessageList · Composer   │
+│  store.applyEvent — incremental stream stitching  │
+└──────────────────┬───────────────────────────────┘
+                   │ contextBridge (preload)
+                   │ sessionAPI / appAPI / pluginAPI / agentAPI / issueAPI
+┌──────────────────┴───────────────────────────────┐
+│  Main Process (Electron)                          │
+│  ipcMain.handle  +  event broadcast               │
+│                                                   │
+│  SessionManager — multi-session state machine      │
+│  PiRpcClient — one per session                    │
+│  IssueStore / AgentManager / PluginManager         │
+│  TaskMonitor / SquadManager / AutopilotManager     │
+└──────────────────┬───────────────────────────────┘
+                   │ stdin/stdout (JSONL)
+          ┌────────┴────────┐  ┌────────────────┐
+          │ pi --mode rpc   │  │ pi --mode rpc  │  …
+          │ (session A)     │  │ (session B)     │
+          └─────────────────┘  └────────────────┘
+```
+
+### Key Design Decisions
+
+**Pi is external, never embedded.** The app spawns `pi --mode rpc` as a child process and communicates over stdin/stdout JSONL. This means:
+- pi updates independently — no app rebuild needed.
+- API keys stay in `~/.pi/agent/auth.json`, never touched by the GUI.
+- Crash isolation: a dead pi process kills one session, not the whole app.
+
+**One session = one pi process.** Each conversation tab gets its own subprocess with its own working directory, agent binding, and environment. Sessions don't share state, and closing a tab kills only that process.
+
+**Agent isolation via CLI flags.** When a session binds to an agent, pi is launched with `--no-extensions --no-skills --no-prompt-templates --no-context-files`, then the agent's specific plugins are explicitly injected. This guarantees the session sees only the agent's toolkit — nothing from global config leaks in.
+
+**Env whitelist, not passthrough.** Parent process environment variables are NOT forwarded to pi children — only a strict allowlist of system paths is copied. All `*_API_KEY*`, `*_SECRET*`, `*_TOKEN*` patterns are stripped from any explicit `env` overrides. No credential leak through forking.
+
+**Issue → Session = 1:N.** An issue is a unit of work; sessions are execution attempts. One issue can spawn multiple sessions (retries, alternative approaches, follow-ups). The Kanban board is the source of truth — chats are execution logs.
+
+---
+
+## Features
+
+### Current (v0.4.0)
+- **Multi-session management** — spawn, monitor, abort, and close independent pi sessions
+- **Kanban board** — 7-column issue tracker (backlog → todo → in_progress → in_review → done / blocked / cancelled)
+- **Issue detail view** — metadata, assignee picker, comment timeline, one-click "Run" to spawn a session
+- **Streaming Markdown rendering** — real-time assistant output with code highlighting, thinking fold, tool call visualization
+- **Agent management** — create/edit/delete isolated agents with private prompts, skills, and extensions
+- **Plugin editor** — CRUD for global prompt templates, skills, and extensions under `~/.pi/agent/`
+- **Dark-first dual-theme** — OKLCH color space, Inter + Geist Mono fonts, no external network dependency
+
+### Roadmap
+| Stage | Theme | Status |
+|-------|-------|--------|
+| v0.4.0 | Issue + Kanban | ✅ Released |
+| v0.5.0 | Task timeout / retry / rollback | Planned |
+| v0.6.0 | Squad routing (leader agent dispatches to specialists) | Planned |
+| v0.7.0 | Agent Skills standard alignment (SKILL.md) | Planned |
+| v0.8.0 | Autopilot cron scheduling | Planned |
+| v0.9.0 | Inbox + desktop notifications | Planned |
+| v1.0.0 | GA — "Multica local standalone" | Target |
+
+### Explicitly Out of Scope
+- Multi-CLI support — **pi only**, by design
+- Cloud runtimes, WebSocket queues, multi-user collaboration
+- Remote `/reload` injection (we prompt the user to reload manually)
+
+---
+
+## Prerequisites
+
+| Dependency | Version | Why |
+|------------|---------|-----|
+| [Node.js](https://nodejs.org) | ≥ 18 | Runtime & build |
+| [pi](https://pi.dev) | ≥ 0.80.6 | Must be on PATH; the app calls `where pi` at startup |
+| API key | — | Configured via pi's own `auth.json` at `~/.pi/agent/auth.json` |
+
+> **This app does not ship pi and does not handle API keys.** If `pi --print "hello"` doesn't work in your terminal, the app won't work either.
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/Fromlan/Fromlan-Pi-Hub.git
+cd Fromlan-Pi-Hub
+
+npm install
+npm run dev       # dev mode with HMR + DevTools
+npm run dist      # portable .exe → release/
+npm run typecheck # full type check
+```
+
+---
+
+## Tech Stack
+
+- **Runtime**: Electron 33 + electron-vite
+- **UI**: React 19 + TypeScript + Zustand 5
+- **Markdown**: react-markdown + remark-gfm + rehype-highlight
+- **Icons**: lucide-react (no emoji)
+- **Packaging**: electron-builder (Windows portable `.exe`)
+- **Subprocess**: pi RPC mode (stdin/stdout JSONL framing)
+
+---
+
+## FAQ
+
+**"No available models" when creating a session?**
+pi has no valid API key configured. Run `pi` in a terminal first to complete provider login.
+
+**Assistant returns empty or nothing?**
+Likely a dead API key or quota exhaustion. Verify with `pi --print "test"`.
+
+**"Red error" flashes and message stays in input?**
+The message failed to deliver to the pi process (process died or stdin closed). The text is preserved — just retry.
+
+**Can't find pi?**
+Ensure pi is globally installed and `where pi` (Windows) returns a path. The app prefers `.exe` over `.cmd/.bat` for security.
+
+---
+
+## Reference
+
+- [pi Documentation](https://pi.dev/docs/latest)
+- [pi RPC Mode](https://pi.dev/docs/latest/rpc)
+- [Anthropic Agent Skills Standard](https://agentskills.io)
+- [Multica](https://github.com/multica-ai/multica) — design inspiration
+- [DESIGN.md](./DESIGN.md) — visual design system
+- [ROADMAP.md](./ROADMAP.md) — full iteration plan
