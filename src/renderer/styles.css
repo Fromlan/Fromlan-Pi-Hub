@@ -259,22 +259,34 @@ body {
 
 .app {
   display: grid;
-  grid-template-columns: 48px 280px minmax(0, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr);
   grid-template-rows: 1fr;
-  grid-template-areas: "iconrail sidebar main";
+  grid-template-areas: "iconrail main";
   height: 100vh;
   background: var(--bg-app);
 }
 
+/* Chat 视图内部左右分栏（左：会话列表 280px，右：主内容区） */
+.chat-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-areas: "sidebar chatmain";
+  min-height: 0;
+  overflow: hidden;
+}
+
 @media (max-width: 1024px) {
-  .app {
-    grid-template-columns: 48px minmax(220px, 260px) minmax(0, 1fr);
+  .chat-layout {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
   }
 }
 
 @media (max-width: 720px) {
-  .app {
-    grid-template-columns: 48px 0 minmax(0, 1fr);
+  .chat-layout {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+  .sidebar {
+    display: none;
   }
 }
 

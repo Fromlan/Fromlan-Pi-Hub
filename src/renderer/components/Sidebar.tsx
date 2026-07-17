@@ -11,11 +11,9 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const persistedSessions = useStore((s) => s.persistedSessions);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const activePersistedId = useStore((s) => s.activePersistedId);
-  const activePanel = useStore((s) => s.activePanel);
   const search = useStore((s) => s.sidebarSearch);
   const showStopped = useStore((s) => s.showStoppedGroup);
   const toggleStopped = useStore((s) => s.toggleStoppedGroup);
-  const setPanel = useStore((s) => s.setPanel);
   const viewMode = useStore((s) => s.viewMode);
   const setViewMode = useStore((s) => s.setViewMode);
 
@@ -32,7 +30,6 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const filteredSessions = useMemo(() => sessions.filter(filterFn), [sessions, search]);
   const filteredPersisted = useMemo(() => persistedSessions.filter(filterFn), [persistedSessions, search]);
 
-  const inChat = activePanel === "chat";
   const empty = sessions.length === 0 && persistedSessions.length === 0;
 
   const VIEW_LABEL: Record<ViewMode, string> = {
@@ -87,7 +84,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
                 <SessionCard
                   key={s.id}
                   session={s}
-                  active={inChat && activeSessionId === s.id}
+                  active={activeSessionId === s.id}
                 />
               ))}
             </div>
@@ -112,7 +109,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
                   <SessionCard
                     key={s.id}
                     session={s}
-                    active={inChat && activePersistedId === s.id}
+                    active={activePersistedId === s.id}
                     stopped
                   />
                 ))}
@@ -120,12 +117,6 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
             )}
           </section>
         </div>
-      )}
-
-      {activePanel !== "chat" && (
-        <button className="sidebar-back" onClick={() => setPanel("chat")}>
-          ← 返回聊天
-        </button>
       )}
     </aside>
   );

@@ -73,46 +73,53 @@ export function App() {
   return (
     <div className="app">
       <IconRail onNew={() => setShowNew(true)} />
-      <Sidebar onNew={() => setShowNew(true)} />
-      <main className="main">
-        {lastNotice && (
-          <div
-            className="top-notice"
-            role="status"
-            onClick={() => useStore.getState().setNotice(null)}
-          >
-            {lastNotice}（点击关闭）
-          </div>
-        )}
-        {activePanel === "agents" ? (
-          <AgentsPanel />
-        ) : activePanel === "plugins" ? (
-          <PluginsPanel />
-        ) : activePanel === "settings" ? (
-          <SettingsPanel />
-        ) : viewMode === "kanban" ? (
-          <KanbanPanel />
-        ) : viewMode === "list" ? (
-          <IssueDetail />
-        ) : active ? (
-          <>
-            <MessageList sessionId={active.id} />
-            <Composer session={active} />
-          </>
-        ) : persistedActive ? (
-          <>
-            <MessageList sessionId={persistedActive.id} />
-            <Composer session={persistedActive} />
-          </>
-        ) : (
-          <div className="empty-state">
-            <p>还没有会话</p>
-            <button className="btn btn-primary" onClick={() => setShowNew(true)}>
-              ＋ 新建会话
-            </button>
-          </div>
-        )}
-      </main>
+
+      {activePanel === "agents" ? (
+        <AgentsPanel />
+      ) : activePanel === "plugins" ? (
+        <PluginsPanel />
+      ) : activePanel === "settings" ? (
+        <SettingsPanel />
+      ) : (
+        /* Chat 视图：内部分左右两栏（会话列表 + 内容区） */
+        <div className="chat-layout">
+          <Sidebar onNew={() => setShowNew(true)} />
+          <main className="main">
+            {lastNotice && (
+              <div
+                className="top-notice"
+                role="status"
+                onClick={() => useStore.getState().setNotice(null)}
+              >
+                {lastNotice}（点击关闭）
+              </div>
+            )}
+            {viewMode === "kanban" ? (
+              <KanbanPanel />
+            ) : viewMode === "list" ? (
+              <IssueDetail />
+            ) : active ? (
+              <>
+                <MessageList sessionId={active.id} />
+                <Composer session={active} />
+              </>
+            ) : persistedActive ? (
+              <>
+                <MessageList sessionId={persistedActive.id} />
+                <Composer session={persistedActive} />
+              </>
+            ) : (
+              <div className="empty-state">
+                <p>还没有会话</p>
+                <button className="btn btn-primary" onClick={() => setShowNew(true)}>
+                  ＋ 新建会话
+                </button>
+              </div>
+            )}
+          </main>
+        </div>
+      )}
+
       {showNew && <NewSessionDialog onClose={() => setShowNew(false)} />}
     </div>
   );
