@@ -1,4 +1,4 @@
-# Lite-Pi
+# Fromlan Pi Hub
 
 > 一个 Electron 桌面客户端，让你在图形界面中快速创建 [pi](https://pi.dev) 进程进行多标签并行对话。
 
@@ -101,7 +101,7 @@ npm run typecheck
 ## 目录结构
 
 ```
-Lite-Pi/
+Fromlan-Pi-Hub/
 ├── DESIGN.md                    # 外观设计文档（色彩/字体/组件规范）
 ├── README.md
 ├── package.json

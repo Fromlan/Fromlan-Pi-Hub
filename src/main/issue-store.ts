@@ -14,8 +14,8 @@ import type {
  * Issue / Comment 持久化层。
  *
  * 文件：
- *   {userData}/lite-pi/issues.json     — envelope: { schemaVersion, issues, nextKeySeq }
- *   {userData}/lite-pi/comments.json   — Comment[]
+ *   {userData}/fromlan-pi-hub/issues.json     — envelope: { schemaVersion, issues, nextKeySeq }
+ *   {userData}/fromlan-pi-hub/comments.json   — Comment[]
  *
  * 写盘用 tmp + rename 原子替换（同卷下原子，跨卷失败则 tmp 残留，下次启动覆盖）。
  * 不迁移历史数据；旧用户首次升级时 envelope 缺失 → 视为空。
@@ -78,7 +78,7 @@ export function createIssue(input: IssueCreateInput): Issue {
   const now = Date.now();
   const issue: Issue = {
     id: randomUUID(),
-    key: `LSN-${env.nextKeySeq++}`,
+    key: `FPH-${env.nextKeySeq++}`,
     title: input.title,
     description: input.description,
     status: input.status ?? "backlog",

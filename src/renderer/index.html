@@ -7,7 +7,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'"
     />
-    <title>Lite-Pi</title>
+    <title>Fromlan Pi Hub</title>
   </head>
   <body>
     <div id="root"></div>
@@ -50,7 +50,7 @@
         window.issueAPI = {
           list: empty,
           get: () => Promise.resolve(null),
-          create: (input) => Promise.resolve({ ok: true, issue: { id: 'mock-issue-1', key: 'LSN-1', title: input.title, status: input.status ?? 'backlog', priority: input.priority ?? 'medium', assignee: input.assignee ?? { kind: 'agent', id: 'mock-agent' }, createdAt: Date.now(), updatedAt: Date.now() } }),
+          create: (input) => Promise.resolve({ ok: true, issue: { id: 'mock-issue-1', key: 'FPH-1', title: input.title, status: input.status ?? 'backlog', priority: input.priority ?? 'medium', assignee: input.assignee ?? { kind: 'agent', id: 'mock-agent' }, createdAt: Date.now(), updatedAt: Date.now() } }),
           update: ok, delete: ok, assign: ok, setStatus: ok,
           commentList: empty,
           commentAdd: (input) => Promise.resolve({ ok: true, comment: { id: 'mock-comment-1', createdAt: Date.now(), ...input } }),

@@ -4,7 +4,7 @@ import { getBaseDir } from "./persistence";
 import type { AgentMeta } from "../shared/types";
 
 /**
- * Agent 元数据持久化层。数据存于 {userData}/lite-pi/agents.json。
+ * Agent 元数据持久化层。数据存于 {userData}/fromlan-pi-hub/agents.json。
  *
  * 注意：agents.json 只存元数据（name / description / createdAt），
  * 实际的 prompts/skills/extensions 文件在 ~/.pi/agents/<name>/ 下。

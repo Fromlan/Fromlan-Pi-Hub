@@ -5,18 +5,18 @@ import type { SessionSnapshot } from "../shared/types";
 import type { MsgData } from "../shared/types";
 
 /**
- * Lite-Pi 持久化层
- * 数据存放于 {userData}/lite-pi/：
+ * Fromlan Pi Hub 持久化层
+ * 数据存放于 {userData}/fromlan-pi-hub/：
  *   sessions.json          — 历史会话索引
  *   messages/{id}.json     — 每个会话的消息数组
  */
 
 const BASE = (() => {
   try {
-    return join(app.getPath("userData"), "lite-pi");
+    return join(app.getPath("userData"), "fromlan-pi-hub");
   } catch {
     // fallback（非 Electron 环境）
-    return join(process.cwd(), ".lite-pi-data");
+    return join(process.cwd(), ".fromlan-pi-hub-data");
   }
 })();
 const MSGS_DIR = join(BASE, "messages");

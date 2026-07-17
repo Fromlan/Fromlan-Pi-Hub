@@ -1,8 +1,8 @@
 {
-  "name": "lite-pi",
+  "name": "fromlan-pi-hub",
   "version": "0.2.0",
-  "description": "桌面客户端：在程序内快速创建 pi 进程进行多标签并行对话",
-  "author": "Lite-Pi",
+  "description": "Fromlan Pi Hub — 桌面客户端：管理多个 pi 进程进行多标签并行对话",
+  "author": "Fromlan",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -35,9 +35,9 @@
     "vite": "^5.4.0"
   },
   "build": {
-    "appId": "dev.lite-pi.app",
-    "productName": "Lite-Pi",
-    "executableName": "Lite-Pi",
+    "appId": "dev.fromlan.pi-hub",
+    "productName": "Fromlan Pi Hub",
+    "executableName": "Fromlan Pi Hub",
     "directories": {
       "output": "release"
     },
@@ -55,7 +55,7 @@
       ]
     },
     "portable": {
-      "artifactName": "Lite-Pi-portable-${arch}.exe"
+      "artifactName": "Fromlan-Pi-Hub-portable-${arch}.exe"
     }
   }
 }

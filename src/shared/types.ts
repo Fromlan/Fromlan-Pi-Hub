@@ -233,7 +233,7 @@ export interface Assignee {
 
 export interface Issue {
   id: string;
-  /** 人类可读编号，格式 `LSN-1`；计数器自增永不回收。 */
+  /** 人类可读编号，格式 `FPH-1`；计数器自增永不回收。 */
   key: string;
   title: string;
   description?: string;

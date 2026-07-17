@@ -1,6 +1,6 @@
-# Lite-Pi 外观设计文档
+# Fromlan Pi Hub 外观设计文档
 
-> 本设计系统提炼自参照项目 `pi-desktop-fleet` 的视觉语言，作为 Lite-Pi 客户端样式的权威规范。核心特征：**OKLCH 色彩空间、深色为默认的双主题、Inter + Geist Mono 字体、细边框与柔和阴影、三列紧凑布局**。
+> 本设计系统提炼自参照项目 `pi-desktop-fleet` 的视觉语言，作为 Fromlan Pi Hub 客户端样式的权威规范。核心特征：**OKLCH 色彩空间、深色为默认的双主题、Inter + Geist Mono 字体、细边框与柔和阴影、三列紧凑布局**。
 
 ---
 
@@ -18,7 +18,7 @@
 
 ## 二、整体布局
 
-Lite-Pi 采用 **三列 CSS Grid**：
+Fromlan Pi Hub 采用 **三列 CSS Grid**：
 
 ```
 .app {

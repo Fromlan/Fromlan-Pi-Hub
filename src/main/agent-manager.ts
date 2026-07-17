@@ -22,7 +22,7 @@ import type {
  * - 软链接删除只 unlink 链接本身，不跟随删除目标。
  *
  * 元数据持久化：
- * - 名称 / 描述 / createdAt 存于 {userData}/lite-pi/agents.json（见 agents-store）。
+ * - 名称 / 描述 / createdAt 存于 {userData}/fromlan-pi-hub/agents.json（见 agents-store）。
  * - 删除时同步移除元数据 + 磁盘目录。
  */
 
