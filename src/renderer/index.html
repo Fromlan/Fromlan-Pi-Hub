@@ -22,23 +22,41 @@
           onSpawned: noop, onChange: noop, onKilled: noop, onEvent: noop,
           kill: ok, saveMessages: ok, historyDelete: ok, historyGetMessages: empty,
           start: () => Promise.resolve({ ok: true, session: { id: 'mock-1', provider: 'mock', model: 'mock', title: 'mock', status: 'idle', messageCount: 0, pendingMessageCount: 0, createdAt: 0, lastActivityAt: 0 } }),
+          getMessages: empty,
+          updateTitle: ok, abort: ok, prompt: () => Promise.resolve({ ok: true, sent: true }), steer: () => Promise.resolve({ ok: true, sent: true }),
+          killAll: ok, historyResume: () => Promise.resolve({ ok: true, session: { id: 'mock-resumed', provider: 'mock', model: 'mock', title: 'mock-resumed', status: 'idle', messageCount: 0, pendingMessageCount: 0, createdAt: 0, lastActivityAt: 0 } }),
         };
         window.pluginAPI = {
           list: () => Promise.resolve({ prompts: [], skills: [], extensions: [] }),
           read: () => Promise.resolve({ body: '', meta: { name: '', relPath: '', size: 0, mtime: 0, isSymlink: false } }),
-          save: ok, create: ok, remove: ok,
+          save: ok, create: ok, remove: ok, delete: ok,
+          onChanged: noop,
         };
         window.agentAPI = {
           list: empty,
+          create: () => Promise.resolve({ ok: true, meta: { name: 'mock-agent', createdAt: 0 } }),
+          delete: ok,
           fileList: () => Promise.resolve({ prompts: [], skills: [], extensions: [] }),
           fileRead: () => Promise.resolve({ body: '', meta: { name: '', relPath: '', size: 0, mtime: 0, isSymlink: false } }),
           fileSave: ok, fileCreate: ok, fileDelete: ok,
+          onChanged: noop,
         };
         window.appAPI = {
           getModels: empty,
           getHomeDir: () => Promise.resolve('C:\\Users\\Test'),
           pickDirectory: () => Promise.resolve(null),
           pathStat: () => Promise.resolve({ ok: false }),
+        };
+        window.issueAPI = {
+          list: empty,
+          get: () => Promise.resolve(null),
+          create: (input) => Promise.resolve({ ok: true, issue: { id: 'mock-issue-1', key: 'LSN-1', title: input.title, status: input.status ?? 'backlog', priority: input.priority ?? 'medium', assignee: input.assignee ?? { kind: 'agent', id: 'mock-agent' }, createdAt: Date.now(), updatedAt: Date.now() } }),
+          update: ok, delete: ok, assign: ok, setStatus: ok,
+          commentList: empty,
+          commentAdd: (input) => Promise.resolve({ ok: true, comment: { id: 'mock-comment-1', createdAt: Date.now(), ...input } }),
+          commentDelete: ok,
+          onCreated: noop, onChanged: noop, onDeleted: noop,
+          onCommentAdded: noop, onCommentDeleted: noop,
         };
       }
     </script>
