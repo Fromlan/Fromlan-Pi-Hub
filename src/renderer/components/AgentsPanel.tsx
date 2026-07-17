@@ -156,7 +156,7 @@ export function AgentsPanel() {
     if (!activeAgentName) return;
     setBusy(true);
     try {
-      const r = await window.agentAPI.remove(activeAgentName);
+      const r = await window.agentAPI.delete(activeAgentName);
       if (!r.ok) {
         setFileError(`删除失败：${r.error}`);
         return;

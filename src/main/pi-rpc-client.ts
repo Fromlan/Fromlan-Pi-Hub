@@ -146,11 +146,34 @@ export class PiRpcClient extends EventEmitter {
       pushDir("extensions", "--extension", (n) => n.endsWith(".ts"));
     }
 
-    // API key 由 Pi 自己的 AuthStorage 从 ~/.pi/agent/auth.json 读取，
-    // 不通过环境变量覆盖（auth.json 优先级更高）。
+    // env 严格白名单：不再透传父进程 env（避免把 shell 中的 *_API_KEY 注入子进程）。
+    // API key 由 pi 自身的 AuthStorage 从 ~/.pi/agent/auth.json 读取，优先级高于 env。
+    // 仅补充无副作用的系统级变量（PATH/TEMP/HOME/LANG/TZ 等）+ opts.env 显式追加项 +
+    // 强制 NO_COLOR/FORCE_COLOR。额外剔除任何形如 *API_KEY*/*SECRET*/*TOKEN* 的项兜底。
+    const baseEnv: Record<string, string> = {
+      PATH: process.env.PATH ?? "",
+      PATHEXT: process.env.PATHEXT ?? "",
+      SYSTEMROOT: process.env.SYSTEMROOT ?? "",
+      TEMP: process.env.TEMP ?? "",
+      TMP: process.env.TMP ?? "",
+      HOME: process.env.HOME ?? "",
+      USERPROFILE: process.env.USERPROFILE ?? "",
+      HOMEDRIVE: process.env.HOMEDRIVE ?? "",
+      HOMEPATH: process.env.HOMEPATH ?? "",
+      LANG: process.env.LANG ?? "",
+      LC_ALL: process.env.LC_ALL ?? "",
+      TZ: process.env.TZ ?? "",
+    };
+    const safe = (e: Record<string, string>) => {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(e)) {
+        if (!/API_KEY|SECRET|TOKEN/i.test(k)) out[k] = v;
+      }
+      return out;
+    };
     const mergedEnv: Record<string, string> = {
-      ...(process.env as Record<string, string>),
-      ...(this.opts.env ?? {}),
+      ...baseEnv,
+      ...safe(this.opts.env ?? {}),
       NO_COLOR: "1",
       FORCE_COLOR: "0",
     };

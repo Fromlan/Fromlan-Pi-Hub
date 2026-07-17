@@ -39,11 +39,11 @@ function createWindow(): void {
     mainWindow = null;
   });
 
-  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
-  } else if (!app.isPackaged) {
-    mainWindow.loadURL("http://localhost:5173");
+  if (!app.isPackaged) {
+    // 开发模式：优先用 ELECTRON_RENDERER_URL（electron-vite 提供），否则兜底 http://localhost:5173。
+    // 两种情况都开 DevTools，便于手动调试。
+    const url = process.env.ELECTRON_RENDERER_URL ?? "http://localhost:5173";
+    mainWindow.loadURL(url);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
@@ -119,7 +119,14 @@ ipcMain.handle(IPC.sessionSaveMessages, (_e, { id, messages }: { id: string; mes
 
 ipcMain.handle(IPC.historyList, () => sessionManager.persistedSessions());
 
-ipcMain.handle(IPC.historyGetMessages, (_e, id: string) => sessionManager.getPersistedMessages(id));
+ipcMain.handle(IPC.historyGetMessages, (_e, id: string) => {
+  try {
+    return sessionManager.getPersistedMessages(id);
+  } catch (e) {
+    console.error("[main] historyGetMessages:", e);
+    return [];
+  }
+});
 
 ipcMain.handle(IPC.historyResume, async (_e, id: string) => {
   try {

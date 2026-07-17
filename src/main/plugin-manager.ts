@@ -1,4 +1,4 @@
-import { promises as fsp, lstatSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
+import { promises as fsp, lstatSync, realpathSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
 import { join, sep } from "path";
 import { homedir } from "os";
 import type { PluginType, PluginItemMeta, PluginFile } from "../shared/types";
@@ -59,6 +59,19 @@ function ensureSafePath(type: PluginType, resolved: string): void {
   const normalized = resolved.replace(/\\/g, sep);
   if (!normalized.startsWith(base)) {
     throw new Error(`拒绝访问：路径超出白名单 (${base})`);
+  }
+}
+
+/**
+ * 解析 symlink 后再次校验真实路径仍在白名单内，防止白名单内 symlink 指向 ~/.ssh 等敏感位置被读出。
+ * readFileSync 默认跟随 symlink，所以读取入口必须做这一步。
+ * 写入路径不强制走 realpath（保留创建 symlink 的能力），但同样要在创建前校验目标。
+ */
+function ensureSafeRealPath(type: PluginType, resolved: string): void {
+  const base = typeDir(type) + sep;
+  const real = realpathSync(resolved).replace(/\\/g, sep);
+  if (!real.startsWith(base)) {
+    throw new Error(`拒绝访问：符号链接目标超出白名单 (${base})`);
   }
 }
 
@@ -177,10 +190,12 @@ export function read(type: PluginType, name: string): PluginFile {
   if (type === "skills") {
     const skillPath = join(abs, "SKILL.md");
     if (!existsSync(skillPath)) throw new Error(`SKILL.md 不存在: ${skillPath}`);
+    ensureSafeRealPath(type, skillPath);
     body = readFileSync(skillPath, "utf8");
     stat = lstatSafe(skillPath);
   } else {
     if (!existsSync(abs)) throw new Error(`文件不存在: ${abs}`);
+    ensureSafeRealPath(type, abs);
     body = readFileSync(abs, "utf8");
     stat = lstatSafe(abs);
   }

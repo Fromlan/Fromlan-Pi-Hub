@@ -77,13 +77,13 @@ const appAPI = {
     ipcRenderer.invoke(IPC.appPickDirectory),
 };
 
-/** 读取结果用判别联合：成功返回 PluginFile，失败返回 { ok:false, error }。 */
-type PluginReadResult = PluginFile | { ok: false; error: string };
+/** 读取结果用判别联合：成功返回 PluginFile，失败返回 { ok:false, error }。pluginAPI.read 与 agentAPI.fileRead 共用。 */
+type FileReadResult = PluginFile | { ok: false; error: string };
 
 const pluginAPI = {
   list: (type: PluginType): Promise<PluginItemMeta[]> =>
     ipcRenderer.invoke(IPC.pluginList, type),
-  read: (type: PluginType, name: string): Promise<PluginReadResult> =>
+  read: (type: PluginType, name: string): Promise<FileReadResult> =>
     ipcRenderer.invoke(IPC.pluginRead, type, name),
   save: (
     type: PluginType,
@@ -97,7 +97,7 @@ const pluginAPI = {
     body?: string
   ): Promise<IpcResult<Record<string, never>>> =>
     ipcRenderer.invoke(IPC.pluginCreate, type, name, body),
-  remove: (
+  delete: (
     type: PluginType,
     name: string
   ): Promise<IpcResult<Record<string, never>>> =>
@@ -106,9 +106,6 @@ const pluginAPI = {
     subscribe<PluginChangedPayload>(IPC.pluginChanged, cb),
 };
 
-/** 读取结果用判别联合：成功返回 PluginFile，失败返回 { ok:false, error }。 */
-type AgentFileResult = PluginFile | { ok: false; error: string };
-
 const agentAPI = {
   list: (): Promise<AgentMeta[]> => ipcRenderer.invoke(IPC.agentList),
   create: (
@@ -116,7 +113,7 @@ const agentAPI = {
     description?: string
   ): Promise<IpcResult<{ meta: AgentMeta }>> =>
     ipcRenderer.invoke(IPC.agentCreate, name, description),
-  remove: (name: string): Promise<IpcResult<Record<string, never>>> =>
+  delete: (name: string): Promise<IpcResult<Record<string, never>>> =>
     ipcRenderer.invoke(IPC.agentDelete, name),
   fileList: (name: string, type: PluginType): Promise<PluginItemMeta[]> =>
     ipcRenderer.invoke(IPC.agentFileList, name, type),
@@ -124,7 +121,7 @@ const agentAPI = {
     name: string,
     type: PluginType,
     file: string
-  ): Promise<AgentFileResult> =>
+  ): Promise<FileReadResult> =>
     ipcRenderer.invoke(IPC.agentFileRead, name, type, file),
   fileSave: (
     name: string,

@@ -90,7 +90,7 @@ export function PluginEditor({ type, target, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const r = await window.pluginAPI.remove(type, name);
+      const r = await window.pluginAPI.delete(type, name);
       if (!r.ok) throw new Error(r.error);
       onClose();
     } catch (e) {

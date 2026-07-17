@@ -86,6 +86,15 @@ export class SessionManager extends EventEmitter {
     this.sessions.set(id, session);
 
     client.on("event", (event: PiEvent) => this.handleEvent(id, event));
+    client.on("error", (err) => {
+      // EventEmitter 在无 error 监听时会抛未捕获异常把主进程带崩，
+      // 这里兜底打印；同时记录到状态机以让 UI 能感知。
+      console.error(`[pi-rpc ${id}] error:`, err);
+      if (this.sessions.has(id)) {
+        session.status = "exited";
+        this.emit("change", this.toSnapshot(session));
+      }
+    });
     client.on("exit", () => {
       session.status = "exited";
       this.emit("change", this.toSnapshot(session));
@@ -146,8 +155,10 @@ export class SessionManager extends EventEmitter {
   async abort(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
+    // abort 本质是通知 pi 停止流式响应，pi 不会回送 response，
+    // 用 send 等响应可能永久 pending。改为 fire-and-forget。
     try {
-      await session.client.send({ type: "abort" });
+      session.client.sendFireAndForget({ type: "abort" });
     } catch {
       // 进程可能已退出，忽略
     }
@@ -216,6 +227,15 @@ export class SessionManager extends EventEmitter {
     this.sessions.set(id, session);
 
     client.on("event", (event: PiEvent) => this.handleEvent(id, event));
+    client.on("error", (err) => {
+      // EventEmitter 在无 error 监听时会抛未捕获异常把主进程带崩，
+      // 这里兜底打印；同时记录到状态机以让 UI 能感知。
+      console.error(`[pi-rpc ${id}] error:`, err);
+      if (this.sessions.has(id)) {
+        session.status = "exited";
+        this.emit("change", this.toSnapshot(session));
+      }
+    });
     client.on("exit", () => {
       session.status = "exited";
       this.emit("change", this.toSnapshot(session));

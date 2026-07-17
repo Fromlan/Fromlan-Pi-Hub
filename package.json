@@ -1,6 +1,6 @@
 {
   "name": "lite-pi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "桌面客户端：在程序内快速创建 pi 进程进行多标签并行对话",
   "author": "Lite-Pi",
   "main": "dist/main/index.js",
@@ -37,6 +37,7 @@
   "build": {
     "appId": "dev.lite-pi.app",
     "productName": "Lite-Pi",
+    "executableName": "Lite-Pi",
     "directories": {
       "output": "release"
     },

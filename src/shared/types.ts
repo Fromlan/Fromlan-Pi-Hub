@@ -26,13 +26,13 @@ export const IPC = {
   historyGetMessages: "history:getMessages",
   historyResume: "history:resume",
   historyDelete: "history:delete",
-  // 插件管理类（main -> renderer，invoke/handle）
+  // 插件管理类（renderer -> main，invoke/handle）
   pluginList: "plugin:list",
   pluginRead: "plugin:read",
   pluginSave: "plugin:save",
   pluginDelete: "plugin:delete",
   pluginCreate: "plugin:create",
-  // 独立 agent 管理类（main -> renderer，invoke/handle）
+  // 独立 agent 管理类（renderer -> main，invoke/handle）
   agentList: "agent:list",
   agentCreate: "agent:create",
   agentDelete: "agent:delete",

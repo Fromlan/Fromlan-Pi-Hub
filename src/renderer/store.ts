@@ -138,6 +138,10 @@ function nextId(): string {
   return `m${msgSeq}`;
 }
 
+/** 单会话内存上限。超长会话累积大量 tool call + 流式文本会吃内存。
+ *  保留首条（多为 system 上下文）+ 滚动窗口尾部 MAX_MESSAGES 条。 */
+const MAX_MESSAGES = 500;
+
 /** 取某会话消息数组的最后一条 assistant 流式消息。 */
 function lastStreamingAssistant(msgs: Msg[]): Msg | undefined {
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -383,10 +387,16 @@ export const useStore = create<StoreState>((set, get) => ({
   deletePersisted: async (id) => {
     const state = get();
     await window.sessionAPI.historyDelete(id);
+    // 同步清理内存中的消息与草稿，避免删除历史后消息残留（loadPersisted 已经把
+    // 历史消息在 App.tsx 的 useEffect 里 importMessages 进了 messagesBySession）。
+    const { [id]: _drop, ...restMsgs } = state.messagesBySession;
+    const { [id]: _d2, ...restDraft } = state.draftBySession;
     set({
       persistedSessions: state.persistedSessions.filter((p) => p.id !== id),
       activePersistedId: state.activePersistedId === id ? null : state.activePersistedId,
       activeId: state.activePersistedId === id ? null : state.activeId,
+      messagesBySession: restMsgs,
+      draftBySession: restDraft,
     });
   },
 
@@ -438,7 +448,15 @@ export const useStore = create<StoreState>((set, get) => ({
 
     const commit = () =>
       set((s) => ({
-        messagesBySession: { ...s.messagesBySession, [sessionId]: msgs },
+        messagesBySession: {
+          ...s.messagesBySession,
+          // 超长会话滚动窗口：保留首条 + 尾部 MAX_MESSAGES 条。
+          // 首条通常是 system/初始上下文，后面切掉的部分不是用户当前关注的。
+          [sessionId]:
+            msgs.length > MAX_MESSAGES
+              ? [msgs[0], ...msgs.slice(msgs.length - MAX_MESSAGES + 1)]
+              : msgs,
+        },
       }));
 
     switch (event.type) {
