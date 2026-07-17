@@ -1,15 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ModelInfo, AgentMeta } from "../../shared/types";
 
-export function NewSessionDialog({ onClose }: { onClose: () => void }) {
+export function NewSessionDialog({
+  onClose,
+  issueId,
+  presetTitle,
+  assigneeName,
+}: {
+  onClose: () => void;
+  /** 阶段 1：从 IssueDetail.Run 启动时传入，关联到当前 issue。 */
+  issueId?: string;
+  /** 从 issue 预填标题（可选），用户仍可在弹窗里改。 */
+  presetTitle?: string;
+  /** 从 issue.assignee 推荐的 agent，留空则走全局。 */
+  assigneeName?: string;
+}) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [provider, setProvider] = useState("");
   const [modelId, setModelId] = useState("");
   const [cwd, setCwd] = useState("");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(presetTitle ?? "");
   const [agents, setAgents] = useState<AgentMeta[]>([]);
-  const [agentName, setAgentName] = useState<string>(""); // "" = 全局
+  const [agentName, setAgentName] = useState<string>(assigneeName ?? ""); // "" = 全局
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,6 +79,7 @@ export function NewSessionDialog({ onClose }: { onClose: () => void }) {
       cwd: trimmedCwd || undefined,
       title: title.trim() || undefined,
       agentName: agentName || undefined,
+      issueId,
     });
     setStarting(false);
     if (r.ok) onClose();

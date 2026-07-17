@@ -45,6 +45,8 @@ interface ManagedSession {
   createdAt: number;
   lastActivityAt: number;
   agentName?: string;
+  /** 阶段 1：从哪个 issue 派生；undefined = 自由会话。 */
+  issueId?: string;
   client: PiRpcClient;
 }
 
@@ -81,6 +83,7 @@ export class SessionManager extends EventEmitter {
       createdAt: Date.now(),
       lastActivityAt: Date.now(),
       agentName: opts.agentName,
+      issueId: opts.issueId,
       client,
     };
     this.sessions.set(id, session);
@@ -222,6 +225,7 @@ export class SessionManager extends EventEmitter {
       createdAt: old.createdAt,
       lastActivityAt: Date.now(),
       agentName: old.agentName,
+      issueId: old.issueId,
       client,
     };
     this.sessions.set(id, session);
@@ -415,6 +419,7 @@ export class SessionManager extends EventEmitter {
       createdAt: s.createdAt,
       lastActivityAt: s.lastActivityAt,
       agentName: s.agentName,
+      issueId: s.issueId,
     };
   }
 }

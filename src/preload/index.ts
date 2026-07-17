@@ -13,6 +13,11 @@ import {
   type PluginChangedPayload,
   type AgentMeta,
   type AgentChangedPayload,
+  type Issue,
+  type IssueCreateInput,
+  type IssueStatus,
+  type Assignee,
+  type Comment,
 } from "../shared/types";
 
 /** 包装 ipcRenderer.on，返回取消订阅函数（供 React useEffect 清理）。 */
@@ -152,7 +157,53 @@ contextBridge.exposeInMainWorld("appAPI", appAPI);
 contextBridge.exposeInMainWorld("pluginAPI", pluginAPI);
 contextBridge.exposeInMainWorld("agentAPI", agentAPI);
 
+const issueAPI = {
+  list: (): Promise<Issue[]> => ipcRenderer.invoke(IPC.issueList),
+  get: (id: string): Promise<Issue | null> =>
+    ipcRenderer.invoke(IPC.issueGet, id),
+  create: (
+    input: IssueCreateInput
+  ): Promise<IpcResult<{ issue: Issue }>> =>
+    ipcRenderer.invoke(IPC.issueCreate, input),
+  update: (
+    id: string,
+    patch: Partial<Issue>
+  ): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.issueUpdate, { id, patch }),
+  delete: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.issueDelete, id),
+  assign: (id: string, assignee: Assignee): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.issueAssign, { id, assignee }),
+  setStatus: (
+    id: string,
+    status: IssueStatus
+  ): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.issueStatus, { id, status }),
+  commentList: (issueId: string): Promise<Comment[]> =>
+    ipcRenderer.invoke(IPC.commentList, issueId),
+  commentAdd: (
+    input: Omit<Comment, "id" | "createdAt">
+  ): Promise<IpcResult<{ comment: Comment }>> =>
+    ipcRenderer.invoke(IPC.commentAdd, input),
+  commentDelete: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.commentDelete, id),
+  // 事件订阅
+  onCreated: (cb: (i: Issue) => void) =>
+    subscribe<Issue>(IPC.issueCreated, cb),
+  onChanged: (cb: (i: Issue) => void) =>
+    subscribe<Issue>(IPC.issueChanged, cb),
+  onDeleted: (cb: (p: { id: string }) => void) =>
+    subscribe<{ id: string }>(IPC.issueDeleted, cb),
+  onCommentAdded: (cb: (c: Comment) => void) =>
+    subscribe<Comment>(IPC.commentAdded, cb),
+  onCommentDeleted: (cb: (p: { id: string }) => void) =>
+    subscribe<{ id: string }>(IPC.commentDeleted, cb),
+};
+
+contextBridge.exposeInMainWorld("issueAPI", issueAPI);
+
 export type SessionAPI = typeof sessionAPI;
 export type AppAPI = typeof appAPI;
 export type PluginAPI = typeof pluginAPI;
 export type AgentAPI = typeof agentAPI;
+export type IssueAPI = typeof issueAPI;

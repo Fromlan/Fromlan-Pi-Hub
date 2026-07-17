@@ -8,6 +8,8 @@ import { Composer } from "./components/Composer";
 import { PluginsPanel } from "./components/PluginsPanel";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { KanbanPanel } from "./components/KanbanPanel";
+import { IssueDetail } from "./components/IssueDetail";
 
 export function App() {
   const sessions = useStore((s) => s.sessions);
@@ -15,14 +17,15 @@ export function App() {
   const activeSessionId = useStore((s) => s.activeSessionId);
   const activePersistedId = useStore((s) => s.activePersistedId);
   const persistedSessions = useStore((s) => s.persistedSessions);
+  const viewMode = useStore((s) => s.viewMode);
   const [showNew, setShowNew] = useState(false);
 
   const active =
-    activePanel === "chat" && activeSessionId
+    activePanel === "chat" && viewMode === "session" && activeSessionId
       ? sessions.find((s) => s.id === activeSessionId) ?? null
       : null;
   const persistedActive =
-    activePanel === "chat" && !active && activePersistedId
+    activePanel === "chat" && viewMode === "session" && !active && activePersistedId
       ? persistedSessions.find((p) => p.id === activePersistedId) ?? null
       : null;
 
@@ -30,6 +33,7 @@ export function App() {
     const store = useStore.getState();
     window.sessionAPI.list().then((list) => store.setSessions(list));
     window.sessionAPI.historyList().then((list) => store.setPersistedSessions(list));
+    window.issueAPI.list().then((list) => useStore.getState().setIssues(list));
 
     const unsubs = [
       window.sessionAPI.onSpawned((snap) => useStore.getState().upsertSession(snap)),
@@ -41,6 +45,13 @@ export function App() {
       }),
       window.sessionAPI.onEvent(({ sessionId, event }) =>
         useStore.getState().applyEvent(sessionId, event)
+      ),
+      window.issueAPI.onCreated((i) => useStore.getState().upsertIssue(i)),
+      window.issueAPI.onChanged((i) => useStore.getState().upsertIssue(i)),
+      window.issueAPI.onDeleted(({ id }) => useStore.getState().removeIssue(id)),
+      window.issueAPI.onCommentAdded((c) => useStore.getState().appendComment(c)),
+      window.issueAPI.onCommentDeleted(({ id }) =>
+        useStore.getState().removeCommentById(id)
       ),
     ];
     return () => unsubs.forEach((u) => u());
@@ -56,17 +67,33 @@ export function App() {
     });
   }, [persistedActive?.id]);
 
+  // 顶部提示条（拖拽失败等告示）
+  const lastNotice = useStore((s) => s.lastNotice);
+
   return (
     <div className="app">
       <IconRail onNew={() => setShowNew(true)} />
       <Sidebar onNew={() => setShowNew(true)} />
       <main className="main">
+        {lastNotice && (
+          <div
+            className="top-notice"
+            role="status"
+            onClick={() => useStore.getState().setNotice(null)}
+          >
+            {lastNotice}（点击关闭）
+          </div>
+        )}
         {activePanel === "agents" ? (
           <AgentsPanel />
         ) : activePanel === "plugins" ? (
           <PluginsPanel />
         ) : activePanel === "settings" ? (
           <SettingsPanel />
+        ) : viewMode === "kanban" ? (
+          <KanbanPanel />
+        ) : viewMode === "list" ? (
+          <IssueDetail />
         ) : active ? (
           <>
             <MessageList sessionId={active.id} />

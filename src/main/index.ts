@@ -5,12 +5,16 @@ import { statSync } from "fs";
 import { SessionManager } from "./session-manager";
 import * as pluginManager from "./plugin-manager";
 import * as agentManager from "./agent-manager";
+import * as issueStore from "./issue-store";
 import {
   IPC,
   type StartSessionOpts,
   type PluginType,
   type PluginChangedPayload,
   type AgentChangedPayload,
+  type IssueCreateInput,
+  type IssueStatus,
+  type Assignee,
 } from "../shared/types";
 
 const sessionManager = new SessionManager();
@@ -299,6 +303,83 @@ ipcMain.handle(IPC.agentFileDelete, (_e, name: string, type: PluginType, file: s
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
+});
+
+// ── Issue IPC（阶段 1） ──
+ipcMain.handle(IPC.issueList, () => issueStore.listIssues());
+ipcMain.handle(IPC.issueGet, (_e, id: string) => issueStore.getIssue(id) ?? null);
+
+ipcMain.handle(IPC.issueCreate, (_e, input: IssueCreateInput) => {
+  try {
+    const issue = issueStore.createIssue(input);
+    broadcast(IPC.issueCreated, issue);
+    return { ok: true, issue };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(
+  IPC.issueUpdate,
+  (_e, { id, patch }: { id: string; patch: Record<string, unknown> }) => {
+    const issue = issueStore.updateIssue(id, patch as Partial<Parameters<typeof issueStore.updateIssue>[1]>);
+    if (issue) broadcast(IPC.issueChanged, issue);
+    return { ok: !!issue };
+  }
+);
+
+ipcMain.handle(IPC.issueDelete, (_e, id: string) => {
+  const ok = issueStore.deleteIssue(id);
+  if (ok) broadcast(IPC.issueDeleted, { id });
+  return { ok };
+});
+
+ipcMain.handle(
+  IPC.issueAssign,
+  (_e, { id, assignee }: { id: string; assignee: Assignee }) => {
+    const issue = issueStore.assignIssue(id, assignee);
+    if (issue) broadcast(IPC.issueChanged, issue);
+    return { ok: !!issue };
+  }
+);
+
+ipcMain.handle(
+  IPC.issueStatus,
+  (_e, { id, status }: { id: string; status: IssueStatus }) => {
+    const issue = issueStore.setIssueStatus(id, status);
+    if (issue) broadcast(IPC.issueChanged, issue);
+    return { ok: !!issue };
+  }
+);
+
+// ── Comment IPC（阶段 1） ──
+ipcMain.handle(IPC.commentList, (_e, issueId: string) =>
+  issueStore.listComments(issueId)
+);
+
+ipcMain.handle(
+  IPC.commentAdd,
+  (
+    _e,
+    input: Omit<
+      Parameters<typeof issueStore.addComment>[0],
+      "id" | "createdAt"
+    >
+  ) => {
+    try {
+      const c = issueStore.addComment(input);
+      broadcast(IPC.commentAdded, c);
+      return { ok: true, comment: c };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+);
+
+ipcMain.handle(IPC.commentDelete, (_e, id: string) => {
+  const ok = issueStore.deleteComment(id);
+  if (ok) broadcast(IPC.commentDeleted, { id });
+  return { ok };
 });
 
 // ── App 生命周期 ──

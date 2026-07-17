@@ -41,6 +41,17 @@ export const IPC = {
   agentFileSave: "agent:file:save",
   agentFileCreate: "agent:file:create",
   agentFileDelete: "agent:file:delete",
+  // Issue 管理类（renderer -> main，invoke/handle）
+  issueList: "issue:list",
+  issueGet: "issue:get",
+  issueCreate: "issue:create",
+  issueUpdate: "issue:update",
+  issueDelete: "issue:delete",
+  issueAssign: "issue:assign",
+  issueStatus: "issue:status",
+  commentList: "comment:list",
+  commentAdd: "comment:add",
+  commentDelete: "comment:delete",
   // 事件类（main -> renderer，send/on）
   sessionSpawned: "session:spawned",
   sessionKilled: "session:killed",
@@ -48,6 +59,11 @@ export const IPC = {
   sessionEvent: "session:event",
   pluginChanged: "plugin:changed",
   agentChanged: "agent:changed",
+  issueChanged: "issue:changed",
+  issueCreated: "issue:created",
+  issueDeleted: "issue:deleted",
+  commentAdded: "comment:added",
+  commentDeleted: "comment:deleted",
 } as const;
 
 /** 插件类型字面量：限定到 ~\/.pi/agent/ 下的三个白名单子目录。 */
@@ -115,6 +131,8 @@ export interface SessionSnapshot {
   lastActivityAt: number;
   /** 绑定的 agent 名（用于 resume 时还原；新建会话时由 StartSessionOpts 传入）。 */
   agentName?: string;
+  /** 阶段 1：从此 issue 派生的会话；旧数据为 undefined。 */
+  issueId?: string;
 }
 
 /** 新建会话的参数。 */
@@ -129,6 +147,8 @@ export interface StartSessionOpts {
    * 有值 = 用 ~/.pi/agents/<name>/ 并关闭全局/项目级发现。
    */
   agentName?: string;
+  /** 阶段 1：从 IssueDetail.Run 启动时传入；用于 session-card 来源标签与会话反查。 */
+  issueId?: string;
 }
 
 /** Agent 元数据。 */
@@ -185,4 +205,63 @@ export interface MsgData {
   text: string;
   thinking?: string;
   toolCalls?: ToolCallData[];
+}
+
+// ── Issue / Comment 子系统（阶段 1） ──
+
+export type IssueStatus =
+  | "backlog"
+  | "todo"
+  | "in_progress"
+  | "in_review"
+  | "done"
+  | "blocked"
+  | "cancelled";
+
+export type IssuePriority = "urgent" | "high" | "medium" | "low";
+
+/**
+ * Polymorphic assignee —— 与 Multica 同构。
+ * 阶段 1 实际仅 `agent` 类型可在 UI 中选择；`human` / `squad` 渲染为 disabled + tooltip。
+ */
+export type AssigneeKind = "human" | "agent" | "squad";
+
+export interface Assignee {
+  kind: AssigneeKind;
+  id: string;
+}
+
+export interface Issue {
+  id: string;
+  /** 人类可读编号，格式 `LSN-1`；计数器自增永不回收。 */
+  key: string;
+  title: string;
+  description?: string;
+  status: IssueStatus;
+  priority: IssuePriority;
+  assignee: Assignee;
+  parent?: string;
+  createdAt: number;
+  updatedAt: number;
+  dueDate?: number;
+}
+
+export interface Comment {
+  id: string;
+  issueId: string;
+  author: { kind: AssigneeKind; id: string; name: string };
+  body: string;
+  /** 占位字段，阶段 1 不实现 mention picker，解析留给阶段 3。 */
+  mentions: Array<{ kind: AssigneeKind; id: string }>;
+  createdAt: number;
+}
+
+export interface IssueCreateInput {
+  title: string;
+  description?: string;
+  status?: IssueStatus;
+  priority?: IssuePriority;
+  assignee?: Assignee;
+  parent?: string;
+  dueDate?: number;
 }

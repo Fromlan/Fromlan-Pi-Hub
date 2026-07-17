@@ -8,6 +8,9 @@ import type {
   PluginItemMeta,
   AgentMeta,
   PanelKind,
+  Issue,
+  IssueStatus,
+  Comment,
 } from "../shared/types";
 
 /** pi content 数组中段项（宽松结构：text / thinking / toolCall）。 */
@@ -130,6 +133,22 @@ interface StoreState {
   toggleTheme: () => void;
   setSidebarSearch: (q: string) => void;
   toggleStoppedGroup: () => void;
+
+  // ── Issues / 视图切换（阶段 1） ──
+  viewMode: "kanban" | "list" | "session";
+  setViewMode: (mode: "kanban" | "list" | "session") => void;
+
+  issues: Issue[];
+  activeIssueId: string | null;
+  commentsByIssue: Record<string, Comment[]>;
+
+  setIssues: (list: Issue[]) => void;
+  upsertIssue: (i: Issue) => void;
+  removeIssue: (id: string) => void;
+  setActiveIssue: (id: string | null) => void;
+  setCommentsForIssue: (issueId: string, list: Comment[]) => void;
+  appendComment: (c: Comment) => void;
+  removeCommentById: (commentId: string) => void;
 }
 
 let msgSeq = 0;
@@ -784,4 +803,137 @@ export const useStore = create<StoreState>((set, get) => ({
   setSidebarSearch: (q) => set({ sidebarSearch: q }),
 
   toggleStoppedGroup: () => set((s) => ({ showStoppedGroup: !s.showStoppedGroup })),
+
+  // ── Issues / 视图切换（阶段 1） ──
+  viewMode: "kanban",
+  setViewMode: (mode) =>
+    set({
+      viewMode: mode,
+      activePanel: "chat",
+      activeId:
+        mode === "session"
+          ? (get().activeSessionId ?? get().activePersistedId)
+          : `__kanban__`,
+    }),
+
+  issues: [],
+  activeIssueId: null,
+  commentsByIssue: {},
+
+  setIssues: (list) =>
+    set((s) => {
+      const nextActive = s.activeIssueId ?? list[0]?.id ?? null;
+      return { issues: list, activeIssueId: nextActive };
+    }),
+
+  upsertIssue: (i) =>
+    set((s) => {
+      const idx = s.issues.findIndex((x) => x.id === i.id);
+      const issues =
+        idx === -1
+          ? [...s.issues, i]
+          : s.issues.map((x) => (x.id === i.id ? i : x));
+      const isNew = idx === -1;
+      return {
+        issues,
+        activeIssueId: s.activeIssueId ?? (isNew ? i.id : s.activeIssueId),
+      };
+    }),
+
+  removeIssue: (id) =>
+    set((s) => {
+      const { [id]: _drop, ...restComments } = s.commentsByIssue;
+      const issues = s.issues.filter((x) => x.id !== id);
+      return {
+        issues,
+        activeIssueId: s.activeIssueId === id ? issues[0]?.id ?? null : s.activeIssueId,
+        commentsByIssue: restComments,
+      };
+    }),
+
+  setActiveIssue: (id) =>
+    set((s) => ({
+      activeIssueId: id,
+      viewMode: "list",
+      activePanel: "chat",
+      activeId: `__issue__`,
+    })),
+
+  setCommentsForIssue: (issueId, list) =>
+    set((s) => ({
+      commentsByIssue: { ...s.commentsByIssue, [issueId]: list },
+    })),
+
+  appendComment: (c) =>
+    set((s) => {
+      const prev = s.commentsByIssue[c.issueId] ?? [];
+      const idx = prev.findIndex((x) => x.id === c.id);
+      const next =
+        idx === -1
+          ? [...prev, c]
+          : prev.map((x) => (x.id === c.id ? c : x));
+      return { commentsByIssue: { ...s.commentsByIssue, [c.issueId]: next } };
+    }),
+
+  removeCommentById: (commentId) =>
+    set((s) => {
+      const next: Record<string, Comment[]> = {};
+      for (const [k, arr] of Object.entries(s.commentsByIssue)) {
+        next[k] = arr.filter((c) => c.id !== commentId);
+      }
+      return { commentsByIssue: next };
+    }),
 }));
+
+// ── 派生 getters（阶段 1） ────────────────────────────────────────
+
+/**
+ * Dev-only：把 zustand store 挂到 window，方便验收测试时注入 mock data。
+ * 生产构建由 electron-vite tree-shake 移除（if (import.meta.env.DEV) 分支）。
+ */
+if (typeof window !== "undefined" && import.meta.env?.DEV) {
+  (window as unknown as { useStoreDevtools: typeof useStore }).useStoreDevtools =
+    useStore;
+}
+
+/** 状态枚举的固定展示顺序，对应看板 7 列。 */
+export const ISSUE_STATUSES: IssueStatus[] = [
+  "backlog",
+  "todo",
+  "in_progress",
+  "in_review",
+  "done",
+  "blocked",
+  "cancelled",
+];
+
+/** 按 status 分组（每组内按 updatedAt 倒序）。 */
+export function groupByStatus(
+  issues: Issue[]
+): Record<IssueStatus, Issue[]> {
+  const map = Object.fromEntries(
+    ISSUE_STATUSES.map((s) => [s, [] as Issue[]])
+  ) as Record<IssueStatus, Issue[]>;
+  for (const i of issues) (map[i.status] ??= []).push(i);
+  for (const s of ISSUE_STATUSES) {
+    map[s].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+  return map;
+}
+
+export function issueByKey(issues: Issue[], key: string): Issue | undefined {
+  return issues.find((i) => i.key === key);
+}
+
+export function issuesAssignedToAgent(
+  issues: Issue[],
+  agentName: string
+): Issue[] {
+  return issues.filter(
+    (i) => i.assignee.kind === "agent" && i.assignee.id === agentName
+  );
+}
+
+export function dueIssues(issues: Issue[], now = Date.now()): Issue[] {
+  return issues.filter((i) => i.dueDate !== undefined && i.dueDate < now);
+}

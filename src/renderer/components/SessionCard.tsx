@@ -14,6 +14,11 @@ export function SessionCard({ session, active, stopped }: Props) {
   const setPersistedSession = useStore((s) => s.setPersistedSession);
   const closeSession = useStore((s) => s.closeSession);
   const deletePersisted = useStore((s) => s.deletePersisted);
+  const setViewMode = useStore((s) => s.setViewMode);
+  const setActiveIssue = useStore((s) => s.setActiveIssue);
+  const issue = useStore((s) =>
+    session.issueId ? s.issues.find((i) => i.id === session.issueId) : undefined
+  );
 
   const onSelect = () => {
     if (stopped) setPersistedSession(session.id);
@@ -24,6 +29,12 @@ export function SessionCard({ session, active, stopped }: Props) {
     e.stopPropagation();
     if (stopped) deletePersisted(session.id);
     else closeSession(session.id);
+  };
+
+  const openIssue = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!issue) return;
+    setActiveIssue(issue.id);
   };
 
   return (
@@ -46,6 +57,15 @@ export function SessionCard({ session, active, stopped }: Props) {
         <div className="session-card-meta tabular">
           {session.provider} · {session.model}
         </div>
+        {issue && (
+          <button
+            className="session-card-issue-tag"
+            onClick={openIssue}
+            title={`跳到 ${issue.key}`}
+          >
+            来自 {issue.key}
+          </button>
+        )}
       </div>
       <button
         className="session-card-close"
