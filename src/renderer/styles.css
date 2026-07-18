@@ -304,17 +304,12 @@ body {
   gap: 4px;
 }
 
-.iconrail-top,
 .iconrail-mid,
 .iconrail-bot {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-}
-
-.iconrail-mid {
-  margin-top: 8px;
 }
 
 .iconrail-bot {
@@ -360,16 +355,6 @@ body {
   width: 3px;
   border-radius: 2px;
   background: var(--accent-blue);
-}
-
-.iconrail-btn-accent {
-  background: var(--btn-bg);
-  color: var(--btn-text);
-}
-
-.iconrail-btn-accent:hover:not(:disabled) {
-  background: oklch(from var(--btn-bg) calc(l + 0.05) c h);
-  color: var(--btn-text);
 }
 
 /* ── Sidebar ── */
@@ -1119,7 +1104,7 @@ body {
 
 /* 新版弹窗卡片（Issue Create Dialog） */
 .modal {
-  width: min(520px, 92vw);
+  width: min(560px, 92vw);
   background: var(--bg-modal);
   border: 0.5px solid var(--border-input);
   border-radius: var(--radius-xl);
@@ -1723,24 +1708,49 @@ body {
   margin-bottom: 10px;
 }
 
+/* 两列属性网格（状态/优先级/负责人/项目）—— 必须覆盖 .form-row 的 flex */
 .form-row-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.4fr;
-  gap: 10px;
-  align-items: end;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+  align-items: stretch;
+  margin-bottom: 10px;
+}
+
+.form-row.form-row-grid {
+  display: grid;
+  flex-direction: unset;
 }
 
 .form-row-grid > label {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  margin: 0;
+}
+
+.form-row-grid .form-input,
+.form-row-grid .assignee-picker {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .form-row-inline {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  width: 100%;
+}
+
+.form-row-inline .form-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.form-row-inline .btn {
+  flex-shrink: 0;
 }
 
 .form-label {
@@ -1760,6 +1770,7 @@ body {
   font-size: 13px;
   padding: 6px 10px;
   width: 100%;
+  box-sizing: border-box;
   transition: border-color 0.12s;
 }
 
@@ -1790,6 +1801,8 @@ textarea.form-input {
   font-size: 12.5px;
   padding: 5px 8px;
   cursor: pointer;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .assignee-picker option:disabled {
@@ -1866,6 +1879,25 @@ textarea.form-input {
   padding: 14px 22px 10px;
   border-bottom: 0.5px solid var(--border-primary);
   flex-shrink: 0;
+  gap: 12px;
+}
+
+.kanban-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.kanban-project-filter {
+  min-width: 120px;
+  max-width: 200px;
+  flex: 0 1 auto;
+}
+
+.kanban-toolbar-actions .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .kanban-toolbar h2 {
@@ -1874,6 +1906,67 @@ textarea.form-input {
   font-size: 14.5px;
   font-weight: 600;
   color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-card-project {
+  margin: 0 0 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.project-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 8px;
+}
+
+.project-progress-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary, var(--border-primary));
+  overflow: hidden;
+}
+
+.project-progress-fill {
+  height: 100%;
+  background: var(--accent-blue);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.project-issue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.project-issue-list li {
+  padding: 4px 0;
+  border-bottom: 0.5px solid var(--border-primary);
+}
+
+.project-issue-list .linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.project-issue-list .linkish:hover {
+  color: var(--accent-primary, inherit);
+  text-decoration: underline;
 }
 
 /* Multica：固定 280px 列 + 横向滚动 */
@@ -2667,22 +2760,28 @@ textarea.form-input {
   font-size: 10px;
 }
 
-/* ── Squads / Autopilots / Inbox / Mentions ── */
+/* ── Squads / Projects / Autopilots / Inbox / Mentions ── */
 .squads-panel,
+.projects-panel,
 .autopilots-panel {
   display: flex;
   flex: 1;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
+  background: var(--bg-main);
 }
 
 .squads-list,
+.projects-panel .squads-list,
 .autopilots-list {
-  width: 260px;
+  width: 240px;
+  flex-shrink: 0;
   border-right: 0.5px solid var(--border-primary);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: var(--bg-sidebar);
 }
 
 .squads-list-head,
@@ -2690,14 +2789,24 @@ textarea.form-input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 14px 14px 12px;
   border-bottom: 0.5px solid var(--border-primary);
+  flex-shrink: 0;
 }
 
 .squads-list-head h2,
 .autopilots-list-head h2 {
   margin: 0;
   font-size: 15px;
+  font-weight: 600;
+}
+
+.squads-list-head .btn,
+.autopilots-list-head .btn {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .squads-list ul,
@@ -2737,15 +2846,33 @@ textarea.form-input {
 .autopilots-detail {
   flex: 1;
   overflow: auto;
-  padding: 20px 24px;
+  padding: 20px 28px 32px;
+  min-width: 0;
 }
 
 .squads-form,
 .autopilots-form {
-  max-width: 560px;
+  max-width: 640px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.squads-form > h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.squads-form > .muted {
+  margin: 0;
+}
+
+.squads-form .form-row {
+  margin-bottom: 0;
 }
 
 .squads-members {
@@ -2754,11 +2881,28 @@ textarea.form-input {
   padding: 10px 12px;
 }
 
+.squads-members-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
 .squads-member-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.squads-member-check {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+}
+
+.squads-member-role {
+  margin-left: 22px;
+  font-size: 12px;
 }
 
 .autopilot-runs {
@@ -2942,16 +3086,18 @@ textarea.form-input {
   font-size: 12px;
 }
 
-.form-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
 .form-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  margin-top: 4px;
+}
+
+.form-actions-danger {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--border-primary);
 }
 
 .error-text {

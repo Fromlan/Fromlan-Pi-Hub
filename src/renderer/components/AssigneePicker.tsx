@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useStore } from "../store";
+import { HUMAN_ME_LABEL, PANEL_LABEL } from "../../shared/labels";
 import type { Assignee } from "../../shared/types";
 
 /**
@@ -41,15 +42,15 @@ export function AssigneePicker({
       ))}
       {squads.length > 0 && (
         <option value="squad:" disabled>
-          — Squad —
+          — {PANEL_LABEL.squads} —
         </option>
       )}
       {squads.map((s) => (
         <option key={s.id} value={`squad:${s.id}`}>
-          Squad: {s.name}
+          {PANEL_LABEL.squads}: {s.name}
         </option>
       ))}
-      <option value="human:default">Human (me)</option>
+      <option value="human:default">{HUMAN_ME_LABEL}</option>
     </select>
   );
 }

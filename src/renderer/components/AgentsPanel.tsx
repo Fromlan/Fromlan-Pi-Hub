@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store";
 import type { PluginType, PluginItemMeta, AgentMeta } from "../../shared/types";
+import { PANEL_LABEL } from "../../shared/labels";
 import { AgentFileEditor } from "./AgentFileEditor";
 import { formatBytes } from "../../shared/utils";
 
@@ -177,14 +178,14 @@ export function AgentsPanel() {
     <div className="agents-panel">
       <aside className="agents-sidebar">
         <div className="agents-sidebar-header">
-          <span className="agents-sidebar-title">Agent</span>
+          <span className="agents-sidebar-title">{PANEL_LABEL.agents}</span>
           <button
             className="btn btn-primary agents-sidebar-new"
             onClick={() => {
               setCreating(true);
               setCreateError(null);
             }}
-            title="新建 Agent"
+            title="新建代理"
           >
             ＋
           </button>
@@ -192,7 +193,7 @@ export function AgentsPanel() {
         <div className="agents-sidebar-list">
           {agents.length === 0 ? (
             <div className="agents-sidebar-empty">
-              还没有 agent。点击右上角 ＋ 新建。
+              还没有代理。点击右上角 ＋ 新建。
             </div>
           ) : (
             agents.map((a) => (
@@ -310,7 +311,7 @@ export function AgentsPanel() {
                   onClick={() => setConfirmDeleteAgent(true)}
                   disabled={!activeAgent}
                 >
-                  删除此 Agent
+                  删除此代理
                 </button>
               )}
             </footer>
@@ -320,7 +321,7 @@ export function AgentsPanel() {
         {creating && (
           <div className="dialog-overlay" onClick={() => !busy && setCreating(false)}>
             <div className="dialog" onClick={(e) => e.stopPropagation()}>
-              <h2>新建 Agent</h2>
+              <h2>新建代理</h2>
               <p className="dialog-hint">
                 agent 拥有独立的 prompts/skills/extensions，启动会话时选择该 agent
                 将完全看不到全局 ~/.pi/agent/ 下的内容。

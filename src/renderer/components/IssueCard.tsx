@@ -1,5 +1,6 @@
 import { MessageSquare } from "lucide-react";
 import { useStore, issueHasActiveTask } from "../store";
+import { HUMAN_ME_LABEL, ISSUE_UI } from "../../shared/labels";
 import { PriorityIcon } from "./PriorityIcon";
 import { ActorAvatar } from "./ActorAvatar";
 import type { Comment, Issue } from "../../shared/types";
@@ -46,14 +47,23 @@ export function IssueCard({
     (s) => s.commentsByIssue[issue.id] ?? EMPTY_COMMENTS
   );
   const tasks = useStore((s) => s.tasks);
+  const squads = useStore((s) => s.squads);
+  const projects = useStore((s) => s.projects);
   const running = issueHasActiveTask(tasks, issue.id);
 
+  const projectName = issue.projectId
+    ? projects.find((p) => p.id === issue.projectId)?.name
+    : undefined;
+
   const assigneeName =
-    issue.assignee.kind === "agent" || issue.assignee.kind === "squad"
-      ? issue.assignee.id
-      : issue.assignee.id === "default"
-        ? "me"
-        : issue.assignee.id || "未分配";
+    issue.assignee.kind === "squad"
+      ? (squads.find((sq) => sq.id === issue.assignee.id)?.name ??
+        issue.assignee.id)
+      : issue.assignee.kind === "agent"
+        ? issue.assignee.id
+        : issue.assignee.id === "default"
+          ? HUMAN_ME_LABEL
+          : issue.assignee.id || "未分配";
   const hasAssignee = !!issue.assignee.id;
   const desc = issue.description ? descriptionPreview(issue.description) : "";
   const due = issue.dueDate ? formatDue(issue.dueDate) : null;
@@ -72,12 +82,16 @@ export function IssueCard({
         </span>
         {running && (
           <span className="issue-card-working" title="Agent 执行中">
-            Working
+            {ISSUE_UI.working}
           </span>
         )}
       </div>
 
       <h3 className="issue-card-title">{issue.title}</h3>
+
+      {projectName ? (
+        <p className="issue-card-project muted">{projectName}</p>
+      ) : null}
 
       {desc ? <p className="issue-card-desc">{desc}</p> : null}
 

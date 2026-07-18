@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import cronstrue from "cronstrue";
 import "cronstrue/locales/zh_CN";
 import { useStore } from "../store";
+import {
+  AUTOPILOT_RUN_STATUS_LABEL,
+  PANEL_LABEL,
+} from "../../shared/labels";
 import type { Autopilot, AutopilotRun, IssuePriority } from "../../shared/types";
 
 function describeCron(cron: string): string {
@@ -78,7 +82,7 @@ export function AutopilotsPanel() {
     <div className="autopilots-panel">
       <aside className="autopilots-list">
         <header className="autopilots-list-head">
-          <h2>Autopilots</h2>
+          <h2>{PANEL_LABEL.autopilots}</h2>
           <button className="btn btn-primary" onClick={() => setCreating(true)}>
             新建
           </button>
@@ -97,14 +101,14 @@ export function AutopilotsPanel() {
               </button>
             </li>
           ))}
-          {list.length === 0 && <li className="muted">还没有 Autopilot</li>}
+          {list.length === 0 && <li className="muted">还没有自动派活</li>}
         </ul>
       </aside>
 
       <main className="autopilots-detail">
         {creating ? (
           <div className="autopilots-form">
-            <h3>新建 Autopilot</h3>
+            <h3>新建自动派活</h3>
             <label className="form-row">
               <span className="form-label">名称</span>
               <input
@@ -201,7 +205,7 @@ export function AutopilotsPanel() {
                   }
                 }}
               >
-                Run now
+                立即运行
               </button>
               <button
                 className="btn"
@@ -217,7 +221,7 @@ export function AutopilotsPanel() {
               <button
                 className="btn btn-danger"
                 onClick={async () => {
-                  if (!confirm("删除此 Autopilot？")) return;
+                  if (!confirm("删除此自动派活？")) return;
                   await window.autopilotAPI.delete(selected.id);
                   setSelectedId(null);
                   await refresh();
@@ -231,8 +235,10 @@ export function AutopilotsPanel() {
               {runs.map((r) => (
                 <li key={r.id}>
                   <time>{new Date(r.firedAt).toLocaleString()}</time>
-                  <span className={`run-status run-${r.status}`}>{r.status}</span>
-                  {r.issueId && <span className="muted">issue</span>}
+                  <span className={`run-status run-${r.status}`}>
+                    {AUTOPILOT_RUN_STATUS_LABEL[r.status]}
+                  </span>
+                  {r.issueId && <span className="muted">Issue</span>}
                   {r.error && <span className="error-text">{r.error}</span>}
                 </li>
               ))}
@@ -241,7 +247,7 @@ export function AutopilotsPanel() {
           </div>
         ) : (
           <div className="empty-state">
-            <p>选择或新建 Autopilot</p>
+            <p>选择或新建自动派活</p>
           </div>
         )}
       </main>

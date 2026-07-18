@@ -84,6 +84,7 @@ export function createIssue(input: IssueCreateInput): Issue {
     status: input.status ?? "todo",
     priority: input.priority ?? "medium",
     assignee: input.assignee ?? { kind: "human", id: "default" },
+    projectId: input.projectId,
     parent: input.parent,
     createdAt: now,
     updatedAt: now,
@@ -100,7 +101,20 @@ export function updateIssue(
 ): Issue | undefined {
   const idx = env.issues.findIndex((i) => i.id === id);
   if (idx === -1) return undefined;
-  env.issues[idx] = { ...env.issues[idx], ...patch, updatedAt: Date.now() };
+  const next: Issue = {
+    ...env.issues[idx],
+    ...patch,
+    updatedAt: Date.now(),
+  };
+  if (
+    "projectId" in patch &&
+    (patch.projectId === undefined ||
+      patch.projectId === null ||
+      patch.projectId === "")
+  ) {
+    delete next.projectId;
+  }
+  env.issues[idx] = next;
   atomicWrite(ISSUES_FILE, env);
   return env.issues[idx];
 }

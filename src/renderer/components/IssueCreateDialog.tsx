@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useStore } from "../store";
 import { AssigneePicker } from "./AssigneePicker";
+import { ProjectPicker } from "./ProjectPicker";
+import { PRIORITY_LABEL, STATUS_LABEL } from "../../shared/labels";
 import type { IssuePriority, IssueStatus, Assignee } from "../../shared/types";
 
 const STATUSES: IssueStatus[] = [
@@ -24,6 +26,10 @@ export function IssueCreateDialog({ onClose }: { onClose: () => void }) {
     kind: "agent",
     id: "",
   });
+  const projectFilterId = useStore((s) => s.projectFilterId);
+  const [projectId, setProjectId] = useState<string | undefined>(
+    projectFilterId ?? undefined
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,6 +46,7 @@ export function IssueCreateDialog({ onClose }: { onClose: () => void }) {
       priority,
       status,
       assignee: assignee.id ? assignee : { kind: "human", id: "default" },
+      projectId,
     });
     setSubmitting(false);
     if (!r.ok) {
@@ -91,7 +98,7 @@ export function IssueCreateDialog({ onClose }: { onClose: () => void }) {
               >
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
-                    {s}
+                    {STATUS_LABEL[s]}
                   </option>
                 ))}
               </select>
@@ -105,7 +112,7 @@ export function IssueCreateDialog({ onClose }: { onClose: () => void }) {
               >
                 {PRIORITIES.map((p) => (
                   <option key={p} value={p}>
-                    {p}
+                    {PRIORITY_LABEL[p]}
                   </option>
                 ))}
               </select>
@@ -113,6 +120,10 @@ export function IssueCreateDialog({ onClose }: { onClose: () => void }) {
             <label>
               <span className="form-label">负责人</span>
               <AssigneePicker value={assignee} onChange={setAssignee} />
+            </label>
+            <label>
+              <span className="form-label">项目</span>
+              <ProjectPicker value={projectId} onChange={setProjectId} />
             </label>
           </div>
           {error && <p className="form-error">{error}</p>}

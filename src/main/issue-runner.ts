@@ -3,6 +3,7 @@ import * as issueStore from "./issue-store";
 import * as taskStore from "./task-store";
 import * as settingsStore from "./settings-store";
 import * as squadStore from "./squad-store";
+import * as projectStore from "./project-store";
 import * as inboxStore from "./inbox-store";
 import { notifyInboxItem } from "./notification";
 import { formatMention, uniqueMentions } from "../shared/mention";
@@ -221,11 +222,27 @@ export function buildIssuePrompt(
 }
 
 async function resolveModel(
-  override?: IssueRerunOpts
+  override?: IssueRerunOpts,
+  issueId?: string
 ): Promise<{ provider: string; model: string; cwd?: string }> {
   const s = settingsStore.getSettings();
+  let projectCwd: string | undefined;
+  if (!override?.cwd && issueId) {
+    const issue = issueStore.getIssue(issueId);
+    if (issue?.projectId) {
+      const project = projectStore.getProject(issue.projectId);
+      if (project?.defaultCwd?.trim()) {
+        projectCwd = project.defaultCwd.trim();
+      }
+    }
+  }
   const defaultCwd =
-    override?.cwd || lastCwd || s.defaultCwd || process.cwd() || homedir();
+    override?.cwd ||
+    projectCwd ||
+    lastCwd ||
+    s.defaultCwd ||
+    process.cwd() ||
+    homedir();
   if (override?.provider && override?.model) {
     return {
       provider: override.provider,
@@ -283,7 +300,7 @@ export async function enqueueForAgent(
       }
     }
 
-    const model = await resolveModel(opts);
+    const model = await resolveModel(opts, issueId);
     const task = taskStore.createTask({
       issueId,
       agentName,
@@ -388,6 +405,69 @@ function pushInbox(input: {
 }
 
 /**
+ * Multica「评论再唤醒 Leader」规则。
+ * 仅在 issue.assignee 已是该 squad 时由 maybeRetriggerSquadLeaderOnComment 调用。
+ *
+ * | 事件 | 触发? |
+ * | 非成员评论 | Yes |
+ * | 成员进度且无 @mention | Yes |
+ * | 显式 @agent/@squad/@human | No（agent 作者 @ 其他 agent 除外） |
+ * | Leader 自身评论 | No |
+ */
+export function shouldRetriggerSquadLeader(
+  comment: Comment,
+  squad: Squad
+): boolean {
+  if (
+    comment.author.kind === "agent" &&
+    comment.author.id === squad.leaderAgentName
+  ) {
+    return false;
+  }
+
+  const mentions = uniqueMentions(comment.body);
+  const hasRoutingMention = mentions.some(
+    (m) => m.kind === "agent" || m.kind === "squad" || m.kind === "human"
+  );
+
+  if (hasRoutingMention) {
+    // Multica 例外：agent 回帖里 @ 了其他 agent → 仍唤醒 leader 协调线程
+    if (
+      comment.author.kind === "agent" &&
+      mentions.some(
+        (m) => m.kind === "agent" && m.id !== comment.author.id
+      )
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  return true;
+}
+
+/** Issue 已派给 Squad 时，按 Multica 规则决定是否再启 leader。 */
+export async function maybeRetriggerSquadLeaderOnComment(
+  comment: Comment
+): Promise<void> {
+  const issue = issueStore.getIssue(comment.issueId);
+  if (!issue || issue.assignee.kind !== "squad" || !issue.assignee.id) return;
+  if (!DISPATCHABLE.has(issue.status)) return;
+
+  const squad = squadStore.getSquad(issue.assignee.id);
+  if (!squad || squad.archived) return;
+  if (!shouldRetriggerSquadLeader(comment, squad)) return;
+
+  void enqueueForAgent(comment.issueId, squad.leaderAgentName, "squad_leader", {
+    promptOverride: buildSquadLeaderPrompt(
+      issue,
+      squad,
+      issueStore.listComments(comment.issueId)
+    ),
+  });
+}
+
+/**
  * 评论 @mention 触发：不改 assignee，给被提及的 agent 各启一条 task。
  */
 export async function handleCommentMentions(comment: Comment): Promise<void> {
@@ -416,7 +496,7 @@ export async function handleCommentMentions(comment: Comment): Promise<void> {
     void enqueueForAgent(comment.issueId, m.id, "mention");
   }
 
-  // Squad mention：启动该 squad 的 leader
+  // Squad mention：启动该 squad 的 leader（不改 assignee）
   for (const m of mentions.filter((x) => x.kind === "squad")) {
     const squad = squadStore.getSquad(m.id);
     if (!squad || squad.archived) continue;
@@ -430,6 +510,23 @@ export async function handleCommentMentions(comment: Comment): Promise<void> {
       ),
     });
   }
+}
+
+/** 评论落库后的统一触发：mention 路由 + squad-assigned 再唤醒。 */
+export async function handleCommentTriggers(comment: Comment): Promise<void> {
+  await handleCommentMentions(comment);
+  await maybeRetriggerSquadLeaderOnComment(comment);
+}
+
+/** Leader 无有效 mention 时的 Multica 风格兜底：roster 中第一个 agent 成员。 */
+export function pickFirstSquadMember(
+  squad: Squad,
+  excludeAgentName: string
+): string | null {
+  const member = squad.members.find(
+    (m) => m.kind === "agent" && m.id && m.id !== excludeAgentName
+  );
+  return member?.id ?? null;
 }
 
 /** 取消 issue 上 active work；rerun 时取消全部，assign 时取消「其他 agent」的。 */
@@ -499,16 +596,22 @@ async function dispatch(
 
     const comments = issueStore.listComments(task.issueId);
     let prompt: string;
-    if (task.trigger === "squad_leader" && promptOverride) {
-      prompt = promptOverride;
-    } else if (
-      task.trigger === "squad_leader" &&
-      issue.assignee.kind === "squad"
-    ) {
-      const squad = squadStore.getSquad(issue.assignee.id);
-      prompt = squad
-        ? buildSquadLeaderPrompt(issue, squad, comments, task.cwd)
-        : buildIssuePrompt(issue, comments, task.cwd, promptOverride);
+    if (task.trigger === "squad_leader") {
+      // 用已解析的 task.cwd 重建，确保项目 defaultCwd 写入 briefing
+      if (issue.assignee.kind === "squad") {
+        const squad = squadStore.getSquad(issue.assignee.id);
+        prompt = squad
+          ? buildSquadLeaderPrompt(issue, squad, comments, task.cwd)
+          : promptOverride ||
+            buildIssuePrompt(issue, comments, task.cwd);
+      } else if (promptOverride) {
+        prompt =
+          task.cwd && !promptOverride.includes("工作目录")
+            ? `${promptOverride}\n工作目录: ${task.cwd}\n`
+            : promptOverride;
+      } else {
+        prompt = buildIssuePrompt(issue, comments, task.cwd);
+      }
     } else {
       prompt = buildIssuePrompt(issue, comments, task.cwd, promptOverride);
     }
@@ -659,25 +762,39 @@ export function onSessionCompleted(sessionId: string, summary: string): void {
   emitComment(c);
 
   if (task.trigger === "squad_leader") {
-    const agentMentions = uniqueMentions(body).filter(
-      (m) => m.kind === "agent" && m.id !== task.agentName
-    );
-    if (agentMentions.length === 0) {
+    const mentionedIds = uniqueMentions(body)
+      .filter((m) => m.kind === "agent" && m.id !== task.agentName)
+      .map((m) => m.id);
+    const targets = [...new Set(mentionedIds)];
+    if (targets.length === 0) {
       const issue = issueStore.getIssue(task.issueId);
-      if (issue && issue.status === "in_progress") {
-        const rolled = issueStore.setIssueStatus(task.issueId, "todo");
-        if (rolled) emitIssue(rolled);
+      const squad =
+        issue?.assignee.kind === "squad"
+          ? squadStore.getSquad(issue.assignee.id)
+          : undefined;
+      const fallback = squad
+        ? pickFirstSquadMember(squad, task.agentName)
+        : null;
+      if (fallback) {
+        targets.push(fallback);
+      } else {
+        if (issue && issue.status === "in_progress") {
+          const rolled = issueStore.setIssueStatus(task.issueId, "todo");
+          if (rolled) emitIssue(rolled);
+        }
+        pushInbox({
+          kind: "task_failed",
+          issueId: task.issueId,
+          title: "Leader 未能解析成员",
+          body: "Leader 输出中没有有效的 agent mention，且 roster 无可用成员，请手动指定。",
+        });
+        return;
       }
-      pushInbox({
-        kind: "task_failed",
-        issueId: task.issueId,
-        title: "Leader 未能解析成员",
-        body: "Leader 输出中没有有效的 agent mention，请手动指定成员。",
-      });
-      return;
     }
-    for (const m of agentMentions) {
-      void enqueueForAgent(task.issueId, m.id, "squad_member", { force: true });
+    for (const agentId of targets) {
+      void enqueueForAgent(task.issueId, agentId, "squad_member", {
+        force: true,
+      });
     }
     return;
   }
@@ -687,6 +804,9 @@ export function onSessionCompleted(sessionId: string, summary: string): void {
     const next = issueStore.setIssueStatus(task.issueId, "in_review");
     if (next) emitIssue(next);
   }
+
+  // 成员/普通 agent 回帖：mention 路由 +（若 issue 派给 squad）再唤醒 leader
+  void handleCommentTriggers(c);
 }
 
 /** session 意外退出 / kill：失败回写。 */

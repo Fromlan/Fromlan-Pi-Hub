@@ -13,6 +13,7 @@ import { IssueDetail } from "./components/IssueDetail";
 import { SquadsPanel } from "./components/SquadsPanel";
 import { AutopilotsPanel } from "./components/AutopilotsPanel";
 import { InboxPanel } from "./components/InboxPanel";
+import { ProjectsPanel } from "./components/ProjectsPanel";
 
 export function App() {
   const sessions = useStore((s) => s.sessions);
@@ -41,6 +42,7 @@ export function App() {
     window.appAPI.getSettings().then((s) => useStore.getState().setAppSettings(s));
     window.agentAPI.list().then((list) => useStore.getState().setAgents(list));
     window.squadAPI.list().then((list) => useStore.getState().setSquads(list));
+    window.projectAPI.list().then((list) => useStore.getState().setProjects(list));
 
     const unsubs = [
       window.sessionAPI.onSpawned((snap) => useStore.getState().upsertSession(snap)),
@@ -62,6 +64,13 @@ export function App() {
       ),
       window.issueAPI.onTaskChanged((t) => useStore.getState().upsertTask(t)),
       window.squadAPI.onChanged((s) => useStore.getState().upsertSquad(s)),
+      window.projectAPI.onChanged((p) => {
+        if ("deleted" in p && p.deleted) {
+          useStore.getState().removeProject(p.id);
+        } else {
+          useStore.getState().upsertProject(p as import("../shared/types").Project);
+        }
+      }),
     ];
     return () => unsubs.forEach((u) => u());
   }, []);
@@ -86,6 +95,8 @@ export function App() {
     mainPanel = <SettingsPanel />;
   } else if (activePanel === "squads") {
     mainPanel = <SquadsPanel />;
+  } else if (activePanel === "projects") {
+    mainPanel = <ProjectsPanel />;
   } else if (activePanel === "autopilots") {
     mainPanel = <AutopilotsPanel />;
   } else if (activePanel === "inbox") {
@@ -133,7 +144,7 @@ export function App() {
 
   return (
     <div className="app">
-      <IconRail onNew={() => setShowNew(true)} />
+      <IconRail />
       {mainPanel}
       {showNew && <NewSessionDialog onClose={() => setShowNew(false)} />}
     </div>

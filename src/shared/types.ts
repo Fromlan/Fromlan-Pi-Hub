@@ -82,6 +82,13 @@ export const IPC = {
   squadUpdate: "squad:update",
   squadDelete: "squad:delete",
   squadChanged: "squad:changed",
+  // Project
+  projectList: "project:list",
+  projectGet: "project:get",
+  projectCreate: "project:create",
+  projectUpdate: "project:update",
+  projectDelete: "project:delete",
+  projectChanged: "project:changed",
   // Autopilot
   autopilotList: "autopilot:list",
   autopilotCreate: "autopilot:create",
@@ -147,7 +154,8 @@ export type PanelKind =
   | "settings"
   | "squads"
   | "autopilots"
-  | "inbox";
+  | "inbox"
+  | "projects";
 
 /** 应用级设置（持久化于 {userData}/fromlan-pi-hub/settings.json）。 */
 export interface AppSettings {
@@ -295,10 +303,46 @@ export interface Issue {
   status: IssueStatus;
   priority: IssuePriority;
   assignee: Assignee;
+  /** 所属项目（至多一个）；缺省表示未归属。 */
+  projectId?: string;
   parent?: string;
   createdAt: number;
   updatedAt: number;
   dueDate?: number;
+}
+
+/** 项目状态（对齐 Multica Projects）。 */
+export type ProjectStatus =
+  | "planned"
+  | "in_progress"
+  | "paused"
+  | "completed"
+  | "cancelled";
+
+/** 项目：Issue 分组容器 + 可选默认 cwd（对齐 Multica local_directory）。 */
+export interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  status: ProjectStatus;
+  priority: IssuePriority;
+  /** 负责人：仅 human / agent（不用 squad）。 */
+  lead?: Assignee;
+  /** 派活默认工作目录。 */
+  defaultCwd?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectCreateInput {
+  name: string;
+  description?: string;
+  icon?: string;
+  status?: ProjectStatus;
+  priority?: IssuePriority;
+  lead?: Assignee;
+  defaultCwd?: string;
 }
 
 export interface Comment {
@@ -393,6 +437,7 @@ export interface IssueCreateInput {
   status?: IssueStatus;
   priority?: IssuePriority;
   assignee?: Assignee;
+  projectId?: string;
   parent?: string;
   dueDate?: number;
 }

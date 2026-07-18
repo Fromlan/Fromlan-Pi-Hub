@@ -5,11 +5,13 @@ import {
   STATUS_LABEL,
   issueHasActiveTask,
 } from "../store";
+import { ISSUE_UI, PRIORITY_LABEL } from "../../shared/labels";
 import { IssueKey } from "./IssueKey";
 import { PriorityIcon } from "./PriorityIcon";
 import { IssueStatusIcon } from "./IssueStatusIcon";
 import { ActorAvatar } from "./ActorAvatar";
 import { AssigneePicker } from "./AssigneePicker";
+import { ProjectPicker } from "./ProjectPicker";
 import { NewSessionDialog } from "./NewSessionDialog";
 import { TaskHistory } from "./TaskHistory";
 import { MentionPicker } from "./MentionPicker";
@@ -17,12 +19,6 @@ import { uniqueMentions } from "../../shared/mention";
 import type { Issue, IssueStatus, IssuePriority } from "../../shared/types";
 
 const PRIORITIES: IssuePriority[] = ["urgent", "high", "medium", "low"];
-const PRIORITY_LABEL: Record<IssuePriority, string> = {
-  urgent: "紧急",
-  high: "高",
-  medium: "中",
-  low: "低",
-};
 
 const EMPTY_COMMENTS: import("../../shared/types").Comment[] = [];
 
@@ -73,9 +69,12 @@ export function IssueDetail() {
     );
   }
 
-  const update = (patch: Partial<Issue>) => {
+  const update = (patch: Partial<Issue> & { projectId?: string }) => {
     const prev = { ...issue };
     const next: Issue = { ...issue, ...patch, updatedAt: Date.now() };
+    if (patch.projectId === "") {
+      delete next.projectId;
+    }
     upsertIssue(next);
     window.issueAPI.update(issue.id, patch).then((r) => {
       if (!r.ok) {
@@ -154,7 +153,7 @@ export function IssueDetail() {
             </button>
             <span className="issue-detail-crumb-sep">/</span>
             <IssueKey issue={issue} />
-            {busy && <span className="issue-card-working">Working</span>}
+            {busy && <span className="issue-card-working">{ISSUE_UI.working}</span>}
           </header>
 
           <input
@@ -173,7 +172,7 @@ export function IssueDetail() {
 
           <section className="issue-detail-activity">
             <header className="issue-detail-comments-head">
-              <h3>Activity</h3>
+              <h3>{ISSUE_UI.activity}</h3>
               <span className="tabular">{comments.length}</span>
             </header>
             <div className="comment-list">
@@ -251,9 +250,9 @@ export function IssueDetail() {
           <TaskHistory issueId={issue.id} />
         </div>
 
-        {/* ── 右栏：Properties ── */}
+        {/* ── 右栏：属性 ── */}
         <aside className="issue-detail-sidebar">
-          <h3 className="issue-props-title">Properties</h3>
+          <h3 className="issue-props-title">{ISSUE_UI.properties}</h3>
           <div className="issue-props">
             <label className="issue-prop-row">
               <span className="issue-prop-label">
@@ -278,9 +277,35 @@ export function IssueDetail() {
               <AssigneePicker
                 value={issue.assignee}
                 onChange={(a) => {
+                  const prev = issue.assignee;
                   upsertIssue({ ...issue, assignee: a, updatedAt: Date.now() });
-                  window.issueAPI.assign(issue.id, a);
+                  window.issueAPI.assign(issue.id, a).then((r) => {
+                    if (!r.ok) {
+                      upsertIssue({
+                        ...issue,
+                        assignee: prev,
+                        updatedAt: Date.now(),
+                      });
+                      useStore
+                        .getState()
+                        .setNotice(r.error ?? "指派失败");
+                    }
+                  });
                 }}
+              />
+            </label>
+
+            <label className="issue-prop-row">
+              <span className="issue-prop-label">项目</span>
+              <ProjectPicker
+                value={issue.projectId}
+                onChange={(projectId) =>
+                  update(
+                    projectId
+                      ? { projectId }
+                      : ({ projectId: "" } as Partial<Issue>)
+                  )
+                }
               />
             </label>
 
@@ -341,7 +366,7 @@ export function IssueDetail() {
           </div>
 
           <p className="muted issue-assign-hint">
-            指定 Agent/Squad 且非 Backlog 时自动派活。
+            指定 Agent/Squad 且非待办池时自动派活。
           </p>
 
           <div className="issue-detail-actions">

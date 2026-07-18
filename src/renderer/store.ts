@@ -14,7 +14,9 @@ import type {
   Task,
   AppSettings,
   Squad,
+  Project,
 } from "../shared/types";
+export { STATUS_LABEL } from "../shared/labels";
 
 const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultProvider: "",
@@ -173,6 +175,14 @@ interface StoreState {
   setSquads: (list: Squad[]) => void;
   upsertSquad: (s: Squad) => void;
   removeSquad: (id: string) => void;
+
+  projects: Project[];
+  /** 看板项目过滤；null = 全部。 */
+  projectFilterId: string | null;
+  setProjects: (list: Project[]) => void;
+  upsertProject: (p: Project) => void;
+  removeProject: (id: string) => void;
+  setProjectFilterId: (id: string | null) => void;
 }
 
 let msgSeq = 0;
@@ -942,6 +952,9 @@ export const useStore = create<StoreState>((set, get) => ({
   setSquads: (list) => set({ squads: list }),
   upsertSquad: (sq) =>
     set((s) => {
+      if (sq.archived) {
+        return { squads: s.squads.filter((x) => x.id !== sq.id) };
+      }
       const idx = s.squads.findIndex((x) => x.id === sq.id);
       const squads =
         idx === -1
@@ -951,6 +964,25 @@ export const useStore = create<StoreState>((set, get) => ({
     }),
   removeSquad: (id) =>
     set((s) => ({ squads: s.squads.filter((x) => x.id !== id) })),
+
+  projects: [],
+  projectFilterId: null,
+  setProjects: (list) => set({ projects: list }),
+  upsertProject: (p) =>
+    set((s) => {
+      const idx = s.projects.findIndex((x) => x.id === p.id);
+      const projects =
+        idx === -1
+          ? [...s.projects, p]
+          : s.projects.map((x) => (x.id === p.id ? p : x));
+      return { projects };
+    }),
+  removeProject: (id) =>
+    set((s) => ({
+      projects: s.projects.filter((x) => x.id !== id),
+      projectFilterId: s.projectFilterId === id ? null : s.projectFilterId,
+    })),
+  setProjectFilterId: (id) => set({ projectFilterId: id }),
 }));
 
 // ── 派生 getters（阶段 1） ────────────────────────────────────────
@@ -985,17 +1017,6 @@ export function issueHasActiveTask(tasks: Task[], issueId: string): boolean {
         t.status === "running")
   );
 }
-
-/** 状态中文标签 */
-export const STATUS_LABEL: Record<IssueStatus, string> = {
-  backlog: "Backlog",
-  todo: "To Do",
-  in_progress: "进行中",
-  in_review: "Review",
-  done: "完成",
-  blocked: "阻塞",
-  cancelled: "取消",
-};
 
 /** 按 status 分组（每组内按 updatedAt 倒序）。 */
 export function groupByStatus(

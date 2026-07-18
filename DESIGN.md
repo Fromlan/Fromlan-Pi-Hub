@@ -268,7 +268,7 @@ hover / focus / active 高亮**不另设 token**，用 `oklch(from var(--x) l c 
 
 ### 8.6 Issue / Kanban（对齐 Multica / Linear 信息层级）
 
-灵感来自 [Multica](https://github.com/multica-ai/multica) 看板与详情，**视觉语言**对齐；不引入 Project / Labels 等对方领域模型。
+灵感来自 [Multica](https://github.com/multica-ai/multica) 看板与详情，**视觉语言**对齐；已引入 **Project** 分组（Issue 多对一 + 进度汇总），仍不做 Labels。
 
 #### IssueCard（四行）
 

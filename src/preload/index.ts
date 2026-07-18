@@ -27,6 +27,8 @@ import {
   type AutopilotCreateInput,
   type AutopilotRun,
   type InboxItem,
+  type Project,
+  type ProjectCreateInput,
 } from "../shared/types";
 
 /** 包装 ipcRenderer.on，返回取消订阅函数（供 React useEffect 清理）。 */
@@ -195,7 +197,10 @@ const issueAPI = {
     ipcRenderer.invoke(IPC.issueUpdate, { id, patch }),
   delete: (id: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.issueDelete, id),
-  assign: (id: string, assignee: Assignee): Promise<{ ok: boolean }> =>
+  assign: (
+    id: string,
+    assignee: Assignee
+  ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC.issueAssign, { id, assignee }),
   setStatus: (
     id: string,
@@ -250,7 +255,9 @@ const squadAPI = {
     patch: Partial<Squad>
   ): Promise<IpcResult<{ squad: Squad }>> =>
     ipcRenderer.invoke(IPC.squadUpdate, { id, patch }),
-  delete: (id: string): Promise<{ ok: boolean }> =>
+  delete: (
+    id: string
+  ): Promise<{ ok: boolean; transferred?: number; error?: string }> =>
     ipcRenderer.invoke(IPC.squadDelete, id),
   onChanged: (cb: (s: Squad) => void) =>
     subscribe<Squad>(IPC.squadChanged, cb),
@@ -294,6 +301,28 @@ contextBridge.exposeInMainWorld("squadAPI", squadAPI);
 contextBridge.exposeInMainWorld("autopilotAPI", autopilotAPI);
 contextBridge.exposeInMainWorld("inboxAPI", inboxAPI);
 
+const projectAPI = {
+  list: (): Promise<Project[]> => ipcRenderer.invoke(IPC.projectList),
+  get: (id: string): Promise<Project | null> =>
+    ipcRenderer.invoke(IPC.projectGet, id),
+  create: (
+    input: ProjectCreateInput
+  ): Promise<IpcResult<{ project: Project }>> =>
+    ipcRenderer.invoke(IPC.projectCreate, input),
+  update: (
+    id: string,
+    patch: Partial<Project>
+  ): Promise<IpcResult<{ project: Project }>> =>
+    ipcRenderer.invoke(IPC.projectUpdate, { id, patch }),
+  delete: (id: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.projectDelete, id),
+  onChanged: (
+    cb: (p: Project | { id: string; deleted: true }) => void
+  ) => subscribe<Project | { id: string; deleted: true }>(IPC.projectChanged, cb),
+};
+
+contextBridge.exposeInMainWorld("projectAPI", projectAPI);
+
 export type SessionAPI = typeof sessionAPI;
 export type AppAPI = typeof appAPI;
 export type PluginAPI = typeof pluginAPI;
@@ -302,3 +331,4 @@ export type IssueAPI = typeof issueAPI;
 export type SquadAPI = typeof squadAPI;
 export type AutopilotAPI = typeof autopilotAPI;
 export type InboxAPI = typeof inboxAPI;
+export type ProjectAPI = typeof projectAPI;

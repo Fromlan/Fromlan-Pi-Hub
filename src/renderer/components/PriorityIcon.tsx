@@ -1,17 +1,11 @@
 import type { IssuePriority } from "../../shared/types";
+import { PRIORITY_LABEL } from "../../shared/labels";
 
 const FILLED: Record<IssuePriority, number> = {
   urgent: 4,
   high: 3,
   medium: 2,
   low: 1,
-};
-
-const LABEL: Record<IssuePriority, string> = {
-  urgent: "紧急",
-  high: "高",
-  medium: "中",
-  low: "低",
 };
 
 /**
@@ -36,7 +30,7 @@ export function PriorityIcon({
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
-      aria-label={`优先级 ${LABEL[priority]}`}
+      aria-label={`优先级 ${PRIORITY_LABEL[priority]}`}
       role="img"
     >
       {[0, 1, 2, 3].map((i) => {

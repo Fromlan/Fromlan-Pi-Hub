@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store";
+import { PANEL_LABEL } from "../../shared/labels";
 import type { Squad, SquadMember } from "../../shared/types";
 
 export function SquadsPanel() {
@@ -18,8 +19,11 @@ export function SquadsPanel() {
   useEffect(() => {
     window.squadAPI.list().then(setSquads);
     window.agentAPI.list().then((list) => useStore.getState().setAgents(list));
-    return window.squadAPI.onChanged((s) => upsertSquad(s));
-  }, [setSquads, upsertSquad]);
+    return window.squadAPI.onChanged((s) => {
+      if (s.archived) removeSquad(s.id);
+      else upsertSquad(s);
+    });
+  }, [setSquads, upsertSquad, removeSquad]);
 
   const selected = squads.find((s) => s.id === selectedId) ?? null;
 
@@ -73,11 +77,26 @@ export function SquadsPanel() {
     void saveSelected({ members });
   };
 
+  const setMemberRole = (agentName: string, role: string) => {
+    if (!selected) return;
+    const members = selected.members.map((m) =>
+      m.kind === "agent" && m.id === agentName ? { ...m, role } : m
+    );
+    // 若尚未在 members 中（仅 leader 勾选态），先加入再写 role
+    const has = selected.members.some(
+      (m) => m.kind === "agent" && m.id === agentName
+    );
+    const next = has
+      ? members
+      : [...selected.members, { kind: "agent" as const, id: agentName, role }];
+    void saveSelected({ members: next });
+  };
+
   return (
     <div className="squads-panel">
       <aside className="squads-list">
         <header className="squads-list-head">
-          <h2>Squads</h2>
+          <h2>{PANEL_LABEL.squads}</h2>
           <button className="btn btn-primary" onClick={() => setCreating(true)}>
             新建
           </button>
@@ -90,18 +109,18 @@ export function SquadsPanel() {
                 onClick={() => setSelectedId(s.id)}
               >
                 <strong>{s.name}</strong>
-                <span className="muted">leader: {s.leaderAgentName}</span>
+                <span className="muted">Leader: {s.leaderAgentName}</span>
               </button>
             </li>
           ))}
-          {squads.length === 0 && <li className="muted">还没有 Squad</li>}
+          {squads.length === 0 && <li className="muted">还没有小队</li>}
         </ul>
       </aside>
 
       <main className="squads-detail">
         {creating ? (
           <div className="squads-form">
-            <h3>新建 Squad</h3>
+            <h3>新建小队</h3>
             <label className="form-row">
               <span className="form-label">名称</span>
               <input
@@ -167,7 +186,7 @@ export function SquadsPanel() {
               </select>
             </label>
             <label className="form-row">
-              <span className="form-label">Instructions</span>
+              <span className="form-label">路由说明</span>
               <textarea
                 className="form-input"
                 rows={4}
@@ -179,42 +198,82 @@ export function SquadsPanel() {
             </label>
             <fieldset className="squads-members">
               <legend>成员</legend>
+              <p className="muted squads-members-hint">
+                Role 描述会注入 Leader 的 Roster，用于路由决策。
+              </p>
               {agents.map((a) => {
-                const checked = selected.members.some(
+                const member = selected.members.find(
                   (m) => m.kind === "agent" && m.id === a.name
                 );
                 const isLeader = a.name === selected.leaderAgentName;
+                const checked = !!member || isLeader;
                 return (
-                  <label key={a.name} className="squads-member-row">
-                    <input
-                      type="checkbox"
-                      checked={checked || isLeader}
-                      disabled={isLeader}
-                      onChange={() => toggleMember(a.name)}
-                    />
-                    {a.name}
-                    {isLeader && <span className="muted">（leader）</span>}
-                  </label>
+                  <div key={a.name} className="squads-member-row">
+                    <label className="squads-member-check">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={isLeader}
+                        onChange={() => toggleMember(a.name)}
+                      />
+                      <span>
+                        {a.name}
+                        {isLeader && (
+                          <span className="muted">（Leader）</span>
+                        )}
+                      </span>
+                    </label>
+                    {checked && !isLeader && (
+                      <input
+                        className="form-input squads-member-role"
+                        type="text"
+                        placeholder="角色，如 owns migrations"
+                        value={member?.role ?? ""}
+                        onChange={(e) => setMemberRole(a.name, e.target.value)}
+                        onBlur={(e) =>
+                          setMemberRole(a.name, e.target.value.trim())
+                        }
+                      />
+                    )}
+                  </div>
                 );
               })}
             </fieldset>
             <button
               className="btn btn-danger"
               onClick={async () => {
-                if (!confirm(`删除 Squad「${selected.name}」？`)) return;
+                if (
+                  !confirm(
+                    `归档小队「${selected.name}」？\n已派给该小队的 Issue 将转给 Leader（${selected.leaderAgentName}）。`
+                  )
+                ) {
+                  return;
+                }
                 const r = await window.squadAPI.delete(selected.id);
                 if (r.ok) {
                   removeSquad(selected.id);
                   setSelectedId(null);
+                  if (r.transferred && r.transferred > 0) {
+                    setNotice(
+                      `已归档；${r.transferred} 个 Issue 已转给 @${selected.leaderAgentName}`
+                    );
+                    void window.issueAPI.list().then((list) =>
+                      useStore.getState().setIssues(list)
+                    );
+                  } else {
+                    setNotice("小队已归档");
+                  }
+                } else {
+                  setNotice(r.error ?? "归档失败");
                 }
               }}
             >
-              删除
+              归档
             </button>
           </div>
         ) : (
           <div className="empty-state">
-            <p>选择或新建一个 Squad</p>
+            <p>选择或新建一个小队</p>
           </div>
         )}
       </main>

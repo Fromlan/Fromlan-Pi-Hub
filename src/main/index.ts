@@ -9,6 +9,7 @@ import * as issueStore from "./issue-store";
 import * as issueRunner from "./issue-runner";
 import * as settingsStore from "./settings-store";
 import * as squadStore from "./squad-store";
+import * as projectStore from "./project-store";
 import * as autopilotStore from "./autopilot-store";
 import * as autopilotManager from "./autopilot-manager";
 import * as inboxStore from "./inbox-store";
@@ -29,6 +30,8 @@ import {
   type AutopilotCreateInput,
   type Squad,
   type Autopilot,
+  type Project,
+  type ProjectCreateInput,
 } from "../shared/types";
 
 const sessionManager = new SessionManager();
@@ -399,6 +402,10 @@ ipcMain.handle(IPC.issueGet, (_e, id: string) => issueStore.getIssue(id) ?? null
 
 ipcMain.handle(IPC.issueCreate, async (_e, input: IssueCreateInput) => {
   try {
+    if (input.projectId) {
+      const p = projectStore.getProject(input.projectId);
+      if (!p) return { ok: false, error: "项目不存在" };
+    }
     const issue = issueStore.createIssue(input);
     broadcast(IPC.issueCreated, issue);
     // 创建时已指定 agent 且非 backlog → 自动派活
@@ -412,10 +419,18 @@ ipcMain.handle(IPC.issueCreate, async (_e, input: IssueCreateInput) => {
 ipcMain.handle(
   IPC.issueUpdate,
   async (_e, { id, patch }: { id: string; patch: Record<string, unknown> }) => {
+    if (patch.projectId !== undefined && patch.projectId !== null && patch.projectId !== "") {
+      const p = projectStore.getProject(String(patch.projectId));
+      if (!p) return { ok: false, error: "项目不存在" };
+    }
     const before = issueStore.getIssue(id);
+    const normalized =
+      patch.projectId === "" || patch.projectId === null
+        ? { ...patch, projectId: undefined }
+        : patch;
     const issue = issueStore.updateIssue(
       id,
-      patch as Partial<Parameters<typeof issueStore.updateIssue>[1]>
+      normalized as Partial<Parameters<typeof issueStore.updateIssue>[1]>
     );
     if (!issue) return { ok: false };
 
@@ -445,6 +460,12 @@ ipcMain.handle(IPC.issueDelete, (_e, id: string) => {
 ipcMain.handle(
   IPC.issueAssign,
   async (_e, { id, assignee }: { id: string; assignee: Assignee }) => {
+    if (assignee.kind === "squad" && assignee.id) {
+      const squad = squadStore.getSquad(assignee.id);
+      if (!squad || squad.archived) {
+        return { ok: false, error: "不能派给已归档的小队" };
+      }
+    }
     const issue = issueStore.assignIssue(id, assignee);
     if (!issue) return { ok: false };
     broadcast(IPC.issueChanged, issue);
@@ -502,7 +523,7 @@ ipcMain.handle(
             }));
       const c = issueStore.addComment({ ...input, mentions });
       broadcast(IPC.commentAdded, c);
-      void issueRunner.handleCommentMentions(c);
+      void issueRunner.handleCommentTriggers(c);
       return { ok: true, comment: c };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
@@ -538,7 +559,73 @@ ipcMain.handle(
   }
 );
 ipcMain.handle(IPC.squadDelete, (_e, id: string) => {
-  const ok = squadStore.deleteSquad(id);
+  // Multica 语义：delete = archive；已派给该 squad 的 issue 转给 leader agent
+  const squad = squadStore.getSquad(id);
+  if (!squad) return { ok: false, error: "Squad 不存在" };
+  if (squad.archived) return { ok: false, error: "Squad 已归档" };
+
+  let transferred = 0;
+  for (const issue of issueStore.listIssues()) {
+    if (issue.assignee.kind === "squad" && issue.assignee.id === id) {
+      const updated = issueStore.assignIssue(issue.id, {
+        kind: "agent",
+        id: squad.leaderAgentName,
+      });
+      if (updated) {
+        broadcast(IPC.issueChanged, updated);
+        transferred++;
+      }
+    }
+  }
+
+  const archived = squadStore.updateSquad(id, { archived: true });
+  if (!archived) return { ok: false, error: "归档失败" };
+  broadcast(IPC.squadChanged, archived);
+  return { ok: true, transferred };
+});
+
+// ── Project IPC ──
+ipcMain.handle(IPC.projectList, () => projectStore.listProjects());
+ipcMain.handle(IPC.projectGet, (_e, id: string) =>
+  projectStore.getProject(id) ?? null
+);
+ipcMain.handle(IPC.projectCreate, (_e, input: ProjectCreateInput) => {
+  try {
+    const project = projectStore.createProject(input);
+    broadcast(IPC.projectChanged, project);
+    return { ok: true, project };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+ipcMain.handle(
+  IPC.projectUpdate,
+  (_e, { id, patch }: { id: string; patch: Partial<Project> }) => {
+    try {
+      const project = projectStore.updateProject(id, patch);
+      if (!project) return { ok: false, error: "项目不存在" };
+      broadcast(IPC.projectChanged, project);
+      return { ok: true, project };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+);
+ipcMain.handle(IPC.projectDelete, (_e, id: string) => {
+  if (!projectStore.getProject(id)) {
+    return { ok: false, error: "项目不存在" };
+  }
+  // Multica：删项目只 unlink Issue，不删 Issue
+  for (const issue of issueStore.listIssues()) {
+    if (issue.projectId === id) {
+      const updated = issueStore.updateIssue(issue.id, {
+        projectId: undefined,
+      });
+      if (updated) broadcast(IPC.issueChanged, updated);
+    }
+  }
+  const ok = projectStore.deleteProject(id);
+  if (ok) broadcast(IPC.projectChanged, { id, deleted: true });
   return { ok };
 });
 

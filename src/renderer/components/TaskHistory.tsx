@@ -1,35 +1,11 @@
 import { useMemo, useState } from "react";
 import { useStore } from "../store";
-import type { Task, TaskStatus, TaskTrigger } from "../../shared/types";
-
-const STATUS_LABEL: Record<TaskStatus, string> = {
-  queued: "排队",
-  dispatched: "已派活",
-  running: "执行中",
-  completed: "完成",
-  failed: "失败",
-  cancelled: "取消",
-};
-
-const TRIGGER_LABEL: Record<TaskTrigger, string> = {
-  assign: "Assign",
-  status: "Status",
-  rerun: "Rerun",
-  create: "Create",
-  mention: "Mention",
-  cron: "Cron",
-  squad_leader: "Squad",
-  squad_member: "Squad",
-  retry: "Retry",
-};
-
-const REASON_LABEL: Record<string, string> = {
-  timeout: "超时",
-  runtime_offline: "离线",
-  runtime_recovery: "恢复",
-  agent_error: "Agent",
-  unknown: "未知",
-};
+import {
+  TASK_REASON_LABEL,
+  TASK_STATUS_LABEL,
+  TASK_TRIGGER_LABEL,
+} from "../../shared/labels";
+import type { Task } from "../../shared/types";
 
 function fmtTime(ts?: number): string {
   if (!ts) return "—";
@@ -97,11 +73,11 @@ export function TaskHistory({ issueId }: Props) {
                   <td className="tabular">{t.attempt}</td>
                   <td>
                     <span className={`task-status-badge status-${t.status}`}>
-                      {STATUS_LABEL[t.status]}
+                      {TASK_STATUS_LABEL[t.status]}
                     </span>
                   </td>
                   <td>{t.agentName}</td>
-                  <td>{TRIGGER_LABEL[t.trigger] ?? t.trigger}</td>
+                  <td>{TASK_TRIGGER_LABEL[t.trigger] ?? t.trigger}</td>
                   <td className="tabular task-time">{fmtTime(t.createdAt)}</td>
                   <td className="tabular task-time">{fmtTime(t.dispatchedAt)}</td>
                   <td className="tabular task-time">{fmtTime(t.runningAt)}</td>
@@ -111,7 +87,8 @@ export function TaskHistory({ issueId }: Props) {
                       <>
                         <span className="task-error-msg" title={t.error}>
                           {t.errorInfo
-                            ? REASON_LABEL[t.errorInfo.reason] ?? t.errorInfo.reason
+                            ? TASK_REASON_LABEL[t.errorInfo.reason] ??
+                              t.errorInfo.reason
                             : "错误"}
                           ：{t.error.slice(0, 48)}
                           {t.error.length > 48 ? "…" : ""}

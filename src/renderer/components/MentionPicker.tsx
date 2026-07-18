@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useStore } from "../store";
 import { formatMention } from "../../shared/mention";
+import { ASSIGNEE_KIND_LABEL, HUMAN_ME_LABEL } from "../../shared/labels";
 import type { AssigneeKind } from "../../shared/types";
 
 interface Props {
@@ -34,11 +35,13 @@ export function MentionPicker({ value, onInsert, onClose }: Props) {
     for (const s of squads) {
       list.push({ kind: "squad", id: s.id, label: s.name });
     }
-    list.push({ kind: "human", id: "default", label: "me" });
+    list.push({ kind: "human", id: "default", label: HUMAN_ME_LABEL });
     if (!q) return list;
     return list.filter(
       (i) =>
-        i.label.toLowerCase().includes(q) || i.id.toLowerCase().includes(q)
+        i.label.toLowerCase().includes(q) ||
+        i.id.toLowerCase().includes(q) ||
+        ASSIGNEE_KIND_LABEL[i.kind].includes(q)
     );
   }, [agents, squads, q]);
 
@@ -63,7 +66,7 @@ export function MentionPicker({ value, onInsert, onClose }: Props) {
                 onClose();
               }}
             >
-              <span className="mention-kind">{i.kind}</span>
+              <span className="mention-kind">{ASSIGNEE_KIND_LABEL[i.kind]}</span>
               <span>{i.label}</span>
             </button>
           </li>

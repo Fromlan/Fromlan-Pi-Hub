@@ -84,6 +84,12 @@
         window.inboxAPI = {
           list: empty, markRead: ok, markAllRead: ok, clear: ok, onChanged: noop,
         };
+        window.projectAPI = {
+          list: empty, get: () => Promise.resolve(null),
+          create: () => Promise.resolve({ ok: false, error: 'mock' }),
+          update: () => Promise.resolve({ ok: false, error: 'mock' }),
+          delete: ok, onChanged: noop,
+        };
       }
     </script>
     <script type="module" src="./main.tsx"></script>

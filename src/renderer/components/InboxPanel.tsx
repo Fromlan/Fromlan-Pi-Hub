@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../store";
+import { INBOX_KIND_LABEL, PANEL_LABEL } from "../../shared/labels";
 import type { InboxItem } from "../../shared/types";
 
 export function InboxPanel() {
@@ -23,7 +24,8 @@ export function InboxPanel() {
     <div className="inbox-panel">
       <header className="inbox-header">
         <h2>
-          Inbox{unread > 0 ? <span className="inbox-badge">{unread}</span> : null}
+          {PANEL_LABEL.inbox}
+          {unread > 0 ? <span className="inbox-badge">{unread}</span> : null}
         </h2>
         <div className="form-actions">
           <button
@@ -38,7 +40,7 @@ export function InboxPanel() {
           <button
             className="btn"
             onClick={async () => {
-              if (!confirm("清空 Inbox？")) return;
+              if (!confirm("清空收件箱？")) return;
               await window.inboxAPI.clear();
               await refresh();
             }}
@@ -48,7 +50,7 @@ export function InboxPanel() {
         </div>
       </header>
       <p className="muted inbox-hint">
-        Inbox 只给人看。Agent 不会出现在这里——它们被触发即工作。
+        收件箱只给人看。Agent 不会出现在这里——它们被触发即工作。
       </p>
       <ul className="inbox-list">
         {items.map((item) => (
@@ -70,7 +72,7 @@ export function InboxPanel() {
               }}
             >
               <header>
-                <span className="inbox-kind">{item.kind}</span>
+                <span className="inbox-kind">{INBOX_KIND_LABEL[item.kind]}</span>
                 <strong>{item.title}</strong>
                 <time>{new Date(item.createdAt).toLocaleString()}</time>
               </header>
