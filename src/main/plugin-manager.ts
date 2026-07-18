@@ -1,6 +1,21 @@
-import { promises as fsp, lstatSync, realpathSync, readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, rmSync } from "fs";
-import { join, sep } from "path";
-import { homedir } from "os";
+import {
+  promises as fsp,
+  lstatSync,
+  realpathSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  unlinkSync,
+  rmSync,
+  readdirSync,
+  statSync,
+  copyFileSync,
+} from "fs";
+import { join, sep, basename, dirname } from "path";
+import { homedir, tmpdir } from "os";
+import AdmZip from "adm-zip";
+import { randomUUID } from "crypto";
 import type { PluginType, PluginItemMeta, PluginFile } from "../shared/types";
 
 /**
@@ -9,7 +24,8 @@ import type { PluginType, PluginItemMeta, PluginFile } from "../shared/types";
  * 安全边界：
  * - 路径严格收敛到 ~/.pi/agent/<type>/ 三个白名单目录；
  * - 名称正则校验，挡掉 ../、/、空字符串；
- * - 软链接写入 = 跟随到目标（用户预期行为），软链接删除只 unlink 链接本身。
+ * - 写入前若目标是符号链接，realpath 二次校验必须仍在白名单内（防写出 ~/.ssh）；
+ * - 软链接删除只 unlink 链接本身，不跟随删除目标。
  */
 
 const ROOT = join(homedir(), ".pi", "agent");
@@ -63,15 +79,25 @@ function ensureSafePath(type: PluginType, resolved: string): void {
 }
 
 /**
- * 解析 symlink 后再次校验真实路径仍在白名单内，防止白名单内 symlink 指向 ~/.ssh 等敏感位置被读出。
- * readFileSync 默认跟随 symlink，所以读取入口必须做这一步。
- * 写入路径不强制走 realpath（保留创建 symlink 的能力），但同样要在创建前校验目标。
+ * 解析 symlink 后再次校验真实路径仍在白名单内，防止白名单内 symlink 指向 ~/.ssh 等敏感位置。
+ * 读取与写入入口都必须做这一步（写入跟随 symlink 时同样会越界）。
  */
 function ensureSafeRealPath(type: PluginType, resolved: string): void {
   const base = typeDir(type) + sep;
   const real = realpathSync(resolved).replace(/\\/g, sep);
   if (!real.startsWith(base)) {
     throw new Error(`拒绝访问：符号链接目标超出白名单 (${base})`);
+  }
+}
+
+/** 写入前：逻辑路径在白名单；若已存在则对真实路径再校验（含 symlink）。 */
+function ensureSafeWriteTarget(type: PluginType, logicalPath: string, writePath: string): void {
+  ensureSafePath(type, logicalPath);
+  if (!existsSync(writePath)) return;
+  try {
+    ensureSafeRealPath(type, writePath);
+  } catch (e) {
+    throw e instanceof Error ? e : new Error(String(e));
   }
 }
 
@@ -219,15 +245,15 @@ export function save(type: PluginType, name: string, body: string): void {
   const v = validateName(type, name);
   if (v) throw new Error(v);
   const abs = resolvePath(type, name);
-  ensureSafePath(type, abs);
 
   if (type === "skills") {
     if (!existsSync(abs)) throw new Error(`skill 目录不存在: ${abs}`);
     const skillPath = join(abs, "SKILL.md");
+    ensureSafeWriteTarget(type, abs, skillPath);
     writeFileSync(skillPath, body, "utf8");
   } else {
-    // 父目录必须已存在（由 create 建立）
     if (!existsSync(typeDir(type))) mkdirSync(typeDir(type), { recursive: true });
+    ensureSafeWriteTarget(type, abs, abs);
     writeFileSync(abs, body, "utf8");
   }
 }
@@ -300,6 +326,75 @@ export function remove(type: PluginType, name: string): void {
     if (stat.isDirectory) throw new Error("期望文件，实际是目录");
     unlinkSync(abs);
   }
+}
+
+/**
+ * 从 zip 导入 Skill（需含 SKILL.md）。
+ * zip 根或一级子目录中找 SKILL.md；目录名作为 skill name（校验正则）。
+ */
+export function importSkillZip(zipPath: string): { name: string } {
+  if (!zipPath || !existsSync(zipPath)) throw new Error("zip 文件不存在");
+  const zip = new AdmZip(zipPath);
+  const entries = zip.getEntries().filter((e) => !e.isDirectory);
+  const skillEntry = entries.find(
+    (e) =>
+      basename(e.entryName.replace(/\\/g, "/")).toLowerCase() === "skill.md"
+  );
+  if (!skillEntry) throw new Error("zip 中未找到 SKILL.md");
+
+  const skillRel = skillEntry.entryName.replace(/\\/g, "/");
+  const parent = dirname(skillRel);
+  let name =
+    parent && parent !== "."
+      ? basename(parent)
+      : basename(zipPath, ".zip").toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  name = name.replace(/^-+|-+$/g, "") || "imported-skill";
+  const v = validateName("skills", name);
+  if (v) throw new Error(`Skill 名称非法（${name}）：${v}`);
+
+  const abs = resolvePath("skills", name);
+  ensureSafePath("skills", abs);
+  if (existsSync(abs)) throw new Error(`Skill 已存在: ${name}`);
+
+  if (!existsSync(typeDir("skills"))) mkdirSync(typeDir("skills"), { recursive: true });
+
+  const extractRoot = join(tmpdir(), `fph-skill-${randomUUID()}`);
+  mkdirSync(extractRoot, { recursive: true });
+  zip.extractAllTo(extractRoot, true);
+
+  // 定位含 SKILL.md 的目录
+  const skillMdPath = join(extractRoot, skillRel);
+  const skillDir = dirname(skillMdPath);
+  mkdirSync(abs, { recursive: true });
+
+  const copyTree = (from: string, to: string): void => {
+    for (const ent of readdirSync(from)) {
+      if (ent === "." || ent === "..") continue;
+      const src = join(from, ent);
+      const dst = join(to, ent);
+      ensureSafePath("skills", dst);
+      const s = statSync(src);
+      if (s.isDirectory()) {
+        mkdirSync(dst, { recursive: true });
+        copyTree(src, dst);
+      } else {
+        copyFileSync(src, dst);
+      }
+    }
+  };
+  copyTree(skillDir, abs);
+
+  if (!existsSync(join(abs, "SKILL.md"))) {
+    rmSync(abs, { recursive: true, force: true });
+    throw new Error("导入后缺少 SKILL.md");
+  }
+
+  try {
+    rmSync(extractRoot, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+  return { name };
 }
 
 /** 测试用：暴露根路径（仅 main 内部）。 */

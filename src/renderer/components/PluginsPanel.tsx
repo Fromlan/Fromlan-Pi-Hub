@@ -113,6 +113,25 @@ export function PluginsPanel() {
           <button className="btn" onClick={refresh} title="重新读取目录">
             刷新
           </button>
+          {activeType === "skills" && (
+            <button
+              className="btn"
+              onClick={async () => {
+                const r = await window.pluginAPI.importSkillZip();
+                if (!r.ok) {
+                  if (r.error !== "已取消") setNotice(r.error);
+                  return;
+                }
+                setNotice(
+                  `已导入 Skill「${r.name}」。在任意 Pi 会话中执行 /reload 以应用。`
+                );
+                await refresh();
+              }}
+              title="从 zip 导入 SKILL.md（Anthropic Agent Skills）"
+            >
+              导入 Zip
+            </button>
+          )}
           <button
             className="btn btn-primary"
             onClick={() => setEditing("new")}

@@ -12,7 +12,7 @@
 4. **克制的层次**：用背景色分层（app < sidebar < main < header < input）+ 细边框（0.5px）+ 三级阴影表达层级，不用重描边。
 5. **紧凑密度**：正文 13px、6–12px 内边距、`0.5px` 半透明白边框，开发工具风格。
 6. **相对色派生**：hover / focus / active 高亮用 `oklch(from var(--x) l c h / α)` 语法从 token 派生，不另设颜色变量。
-7. **图标语言化**：所有图标来自 lucide-react，状态点用自定义 SVG；不用 emoji（跨平台渲染不一致）。
+7. **图标语言化**：所有图标来自 lucide-react；会话状态用圆点 SVG（`StatusIcon`），Issue 状态/优先级用进度环与竖条 SVG（`IssueStatusIcon` / `PriorityIcon`）；不用 emoji（跨平台渲染不一致）。
 
 ---
 
@@ -31,9 +31,9 @@ Fromlan Pi Hub 采用 **三列 CSS Grid**：
 
 | 列 | 宽度 | 内容 | 关键类 |
 |---|---|---|---|
-| IconRail | 48px | 顶级导航：新建会话 / Agents / Plugins / 主题切换 / 设置 | `.iconrail` |
-| Sidebar | 280px | 搜索框 + "运行中"分组 + "已停止"分组 | `.sidebar` |
-| Main | 1fr | 当前 activePanel 渲染区（MessageList+Composer / AgentsPanel / PluginsPanel / SettingsPanel） | `.main` |
+| IconRail | 48px | 顶级导航：新建 / 看板·Agents·Squads·Plugins·Autopilots·Inbox / 主题·设置 | `.iconrail` |
+| Sidebar | 280px | 视图切换 + 搜索 + 运行中/已停止会话（或面板上下文） | `.sidebar` |
+| Main | 1fr | `activePanel` + `viewMode` 路由区（Kanban / IssueDetail / Session / 各管理面板） | `.main` |
 
 响应式：
 
@@ -42,11 +42,12 @@ Fromlan Pi Hub 采用 **三列 CSS Grid**：
 
 ### 2.1 IconRail（48px 垂直图标条）
 
-- 三段布局：`iconrail-top`（新建会话）/ `iconrail-mid`（Agents + Plugins）/ `iconrail-bot`（主题 + 设置）
+- 三段布局：`iconrail-top`（新建会话）/ `iconrail-mid`（看板 / Agents / Squads / Plugins / Autopilots / Inbox）/ `iconrail-bot`（主题 + 设置）
 - 按钮 32×32，`.iconrail-btn`，透明背景，hover `--bg-list-hover`
 - Active 态：背景 `--bg-list-selected` + 文字 `--accent-blue` + **3px 左侧 accent bar**（`::before` 伪元素）
 - 新建按钮变体 `.iconrail-btn-accent`：实心 `--btn-bg`，白字
-- 图标来自 lucide-react：`Plus` / `Users` / `Plug` / `Sun` / `Moon` / `Settings`
+- Inbox 未读用 `.iconrail-dot` 角标（非 emoji）
+- 图标来自 lucide-react：`Plus` / `LayoutDashboard` / `Users` / `Network` / `Plug` / `Timer` / `Inbox` / `Sun` / `Moon` / `Settings`
 
 ### 2.2 Sidebar（280px 会话列表）
 
@@ -131,7 +132,16 @@ Fromlan Pi Hub 采用 **三列 CSS Grid**：
 | compacting 压缩中 | `--accent-purple` | 紫 | 是 |
 | exited 已退出 | `--accent-red` | 红 | 否（opacity 0.6） |
 
-实现：`StatusIcon` 渲染 `.status-icon-dot.status-{status}`，颜色与脉冲通过 CSS 类切换，**禁止在 JS 中写死颜色**。
+实现：会话 `StatusIcon` 渲染 `.status-icon-dot.status-{status}`，颜色与脉冲通过 CSS 类切换，**禁止在 JS 中写死颜色**。
+
+### 3.6 Issue 状态 / 优先级色（Kanban）
+
+| Token | 用途 |
+|---|---|
+| `--issue-status-backlog` … `--issue-status-cancelled` | 七态语义色；列 tint、`IssueStatusIcon`、Working chip |
+| `--priority-urgent` / `high` / `medium` / `low` | `PriorityIcon` 竖条填充色 |
+
+列背景用 `color-mix(in oklch, var(--issue-status-*) 10–12%, var(--bg-header))`，**不要**给卡片整边上色。
 
 ---
 
@@ -256,6 +266,51 @@ hover / focus / active 高亮**不另设 token**，用 `oklch(from var(--x) l c 
 - body 加 `transition: background-color .2s ease, color .2s ease`，主题切换平滑过渡。
 - 当前仅内存态（刷新回到 dark）。持久化需扩展，可加 localStorage。
 
+### 8.6 Issue / Kanban（对齐 Multica / Linear 信息层级）
+
+灵感来自 [Multica](https://github.com/multica-ai/multica) 看板与详情，**视觉语言**对齐；不引入 Project / Labels 等对方领域模型。
+
+#### IssueCard（四行）
+
+```
+.issue-card
+├── .issue-card-row1     PriorityIcon + .issue-key | .issue-card-working
+├── .issue-card-title    13px / 500 / line-clamp-2（主视觉）
+├── .issue-card-desc     可选，11.5px muted，单行省略
+└── .issue-card-row4     ActorAvatar + 名 | due / 相对时间 + MessageSquare 计数
+```
+
+- 卡片用 `--bg-main` + `0.5px` 边框 + `--shadow-sm`；hover 只微调边框/底
+- 优先级：仅 `PriorityIcon`（4 格竖条 SVG）；Key 为 muted mono
+- **禁止**彩色文字优先级徽章、**禁止** emoji（评论计数用 lucide `MessageSquare`）
+- 活跃 Task：右上角 `.issue-card-working`（「Working」脉冲 chip）
+
+#### Kanban 列
+
+- 固定列宽 **280px**（`grid-auto-flow: column` + `grid-auto-columns: 280px`），横向滚动
+- 列头：`IssueStatusIcon`（进度环 SVG）+ 标题 + 计数；**不用**实心圆点作主指示
+- 列壳 `rounded-xl` + 状态 tint；空态文案「暂无 issue」
+
+> 会话状态用 `StatusIcon`（圆点）；Issue 状态用 `IssueStatusIcon`（进度环）。二者勿混名。
+
+#### IssueDetail（文档主栏 + 右侧 Properties）
+
+```
+.issue-detail-layout
+├── .issue-detail-doc          max-width 48rem；面包屑 / 大标题 / 描述 / Activity
+└── .issue-detail-sidebar      ~300px；Properties 网格 + 操作 + 只读时间戳
+```
+
+- 标题：`.issue-title-hero` ≈ 22px / 700
+- Properties 行：`.issue-prop-row` = label 88px + 控件；label muted
+- TaskHistory 挂在主栏 Activity 下方
+
+#### 评论线程
+
+- `.comment-item` 轻卡片；头行 `ActorAvatar`（md）+ 作者 + 时间
+- `.comment-body` 左缩进约 48px（对齐 Multica `pl-12`）
+- agent 评论：左边线 accent，非整块重染色
+
 ---
 
 ## 九、动效
@@ -297,24 +352,21 @@ hover / focus / active 高亮**不另设 token**，用 `oklch(from var(--x) l c 
 `store.ts` 拆分三层路由字段（取代旧的虚拟 ID `__plugins__` / `__agents__`）：
 
 ```ts
-type PanelKind = "chat" | "agents" | "plugins" | "settings";
+type PanelKind =
+  | "chat" | "agents" | "plugins" | "settings"
+  | "squads" | "autopilots" | "inbox";
 
-interface StoreState {
-  activePanel: PanelKind;          // 默认 "chat"
-  activeSessionId: string | null;  // 运行中会话
-  activePersistedId: string | null;// 已停止会话（查阅历史）
-  // activeId 保留为 deprecated 薄壳，setActive 自动路由到新字段
-}
+// chat 下另有 viewMode: "kanban" | "list" | "session"
 ```
 
-路由矩阵：
+路由矩阵（摘要）：
 
-| activePanel | activeSessionId | activePersistedId | Main 渲染 |
-|---|---|---|---|
-| `"chat"` | 真实 id | (忽略) | MessageList + Composer |
-| `"chat"` | null | 真实 id | 历史消息（只读 + Composer 可继续） |
-| `"chat"` | null | null | EmptyState |
-| `"agents"` / `"plugins"` / `"settings"` | (忽略) | (忽略) | 对应面板 |
+| activePanel / viewMode | Main 渲染 |
+|---|---|
+| `chat` + `kanban` | KanbanPanel |
+| `chat` + `list` | IssueDetail |
+| `chat` + `session` | MessageList + Composer |
+| `agents` / `plugins` / `squads` / `autopilots` / `inbox` / `settings` | 对应面板 |
 
 迁移：`setActive(id)` 保留为薄壳，自动根据 id 类型路由（`__plugins__` → `setPanel("plugins")`，真实会话 id → `setSession(id)`，persisted id → `setPersistedSession(id)`）。
 
@@ -329,7 +381,8 @@ interface StoreState {
 | 三列布局 | `.app` grid + `.iconrail` + `.sidebar` + `.main` |
 | 组件类名 | `components/*.tsx` 采用本文档语义类名（`.bubble-*` / `.btn-*` / `.session-card` / `.iconrail-btn` 等） |
 | 主题切换 | `body.dataset.theme` + `useStore.toggleTheme()`，由 IconRail `.iconrail-bot` 按钮触发 |
-| 图标 | lucide-react named import + `StatusIcon` 自定义 SVG |
+| 图标 | lucide-react named import + 会话 `StatusIcon` / Issue `IssueStatusIcon` / `PriorityIcon` / `ActorAvatar` |
+| Issue 看板/详情 | `KanbanPanel` / `IssueCard` / `IssueDetail` + `.kanban-*` / `.issue-*` / `.comment-*` |
 | 共享工具 | `src/shared/utils.ts`（formatBytes / NAME_REGEX / buildNewBody） |
 | IPC 类型 | `src/shared/types.ts` 单一事实源，含 `PanelKind` |
 
@@ -346,3 +399,5 @@ interface StoreState {
 7. ❌ 创建新按钮变体但不走 `.btn-*` 命名 → 必须复用六型之一或扩展。
 8. ❌ 给新元素加 1px 实色边框 → 用 `0.5px` + 半透明 token 边框。
 9. ❌ 用 outline 做焦点环 → 用 `box-shadow: 0 0 0 3px oklch(from var(--accent-blue) l c h / 0.18)`。
+10. ❌ Issue 卡片上用文字优先级徽章 / 实心状态圆点堆砌 → 用 `PriorityIcon` + `IssueStatusIcon`（列头）+ Working chip。
+11. ❌ 把会话 `StatusIcon` 与 Issue `IssueStatusIcon` 混为一个组件 → 会话圆点 / Issue 进度环分文件。

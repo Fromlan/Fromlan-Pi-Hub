@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ModelInfo, AgentMeta } from "../../shared/types";
+import { useStore } from "../store";
 
 export function NewSessionDialog({
   onClose,
@@ -82,8 +83,11 @@ export function NewSessionDialog({
       issueId,
     });
     setStarting(false);
-    if (r.ok) onClose();
-    else setError(r.error);
+    if (r.ok) {
+      useStore.getState().setViewMode("session");
+      if (r.session?.id) useStore.getState().setSession(r.session.id);
+      onClose();
+    } else setError(r.error);
   };
 
   return (

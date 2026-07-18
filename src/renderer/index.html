@@ -27,16 +27,17 @@
           killAll: ok, historyResume: () => Promise.resolve({ ok: true, session: { id: 'mock-resumed', provider: 'mock', model: 'mock', title: 'mock-resumed', status: 'idle', messageCount: 0, pendingMessageCount: 0, createdAt: 0, lastActivityAt: 0 } }),
         };
         window.pluginAPI = {
-          list: () => Promise.resolve({ prompts: [], skills: [], extensions: [] }),
+          list: empty,
           read: () => Promise.resolve({ body: '', meta: { name: '', relPath: '', size: 0, mtime: 0, isSymlink: false } }),
           save: ok, create: ok, remove: ok, delete: ok,
+          importSkillZip: () => Promise.resolve({ ok: false, error: '已取消' }),
           onChanged: noop,
         };
         window.agentAPI = {
           list: empty,
           create: () => Promise.resolve({ ok: true, meta: { name: 'mock-agent', createdAt: 0 } }),
           delete: ok,
-          fileList: () => Promise.resolve({ prompts: [], skills: [], extensions: [] }),
+          fileList: empty,
           fileRead: () => Promise.resolve({ body: '', meta: { name: '', relPath: '', size: 0, mtime: 0, isSymlink: false } }),
           fileSave: ok, fileCreate: ok, fileDelete: ok,
           onChanged: noop,
@@ -46,17 +47,42 @@
           getHomeDir: () => Promise.resolve('C:\\Users\\Test'),
           pickDirectory: () => Promise.resolve(null),
           pathStat: () => Promise.resolve({ ok: false }),
+          revealInExplorer: () => Promise.resolve({ ok: true }),
+          openInExplorer: () => Promise.resolve({ ok: true }),
+          getSettings: () => Promise.resolve({
+            defaultProvider: '', defaultModel: '', defaultCwd: '',
+            dispatchTimeoutMs: 300000, runningTimeoutMs: 9000000, maxRetries: 2, notifyMode: 'background',
+          }),
+          updateSettings: (s) => Promise.resolve({ ok: true, settings: s }),
         };
         window.issueAPI = {
           list: empty,
           get: () => Promise.resolve(null),
           create: (input) => Promise.resolve({ ok: true, issue: { id: 'mock-issue-1', key: 'FPH-1', title: input.title, status: input.status ?? 'backlog', priority: input.priority ?? 'medium', assignee: input.assignee ?? { kind: 'agent', id: 'mock-agent' }, createdAt: Date.now(), updatedAt: Date.now() } }),
           update: ok, delete: ok, assign: ok, setStatus: ok,
+          rerun: () => Promise.resolve({ ok: true, task: null }),
+          taskList: empty, taskListByIssue: empty,
           commentList: empty,
           commentAdd: (input) => Promise.resolve({ ok: true, comment: { id: 'mock-comment-1', createdAt: Date.now(), ...input } }),
           commentDelete: ok,
           onCreated: noop, onChanged: noop, onDeleted: noop,
-          onCommentAdded: noop, onCommentDeleted: noop,
+          onCommentAdded: noop, onCommentDeleted: noop, onTaskChanged: noop,
+        };
+        window.squadAPI = {
+          list: empty, get: () => Promise.resolve(null),
+          create: () => Promise.resolve({ ok: false, error: 'mock' }),
+          update: () => Promise.resolve({ ok: false, error: 'mock' }),
+          delete: ok, onChanged: noop,
+        };
+        window.autopilotAPI = {
+          list: empty,
+          create: () => Promise.resolve({ ok: false, error: 'mock' }),
+          update: () => Promise.resolve({ ok: false, error: 'mock' }),
+          delete: ok, runNow: () => Promise.resolve({ ok: false, error: 'mock' }),
+          runs: empty, onChanged: noop,
+        };
+        window.inboxAPI = {
+          list: empty, markRead: ok, markAllRead: ok, clear: ok, onChanged: noop,
         };
       }
     </script>

@@ -19,8 +19,20 @@ export function SessionCard({ session, active, stopped }: Props) {
   const issue = useStore((s) =>
     session.issueId ? s.issues.find((i) => i.id === session.issueId) : undefined
   );
+  const linkedTask = useStore((s) =>
+    session.issueId
+      ? s.tasks.find(
+          (t) =>
+            t.sessionId === session.id ||
+            (t.issueId === session.issueId &&
+              (t.status === "running" || t.status === "dispatched"))
+        )
+      : undefined
+  );
+  const maxRetries = useStore((s) => s.appSettings.maxRetries);
 
   const onSelect = () => {
+    setViewMode("session");
     if (stopped) setPersistedSession(session.id);
     else setSession(session.id);
   };
@@ -65,6 +77,14 @@ export function SessionCard({ session, active, stopped }: Props) {
           >
             来自 {issue.key}
           </button>
+        )}
+        {linkedTask && linkedTask.attempt > 1 && (
+          <span
+            className="session-card-retry-badge"
+            title={`第 ${linkedTask.attempt} 次尝试（上限 ${maxRetries}）`}
+          >
+            已重试 {linkedTask.attempt}/{maxRetries}
+          </span>
         )}
       </div>
       <button

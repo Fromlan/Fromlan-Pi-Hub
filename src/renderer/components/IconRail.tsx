@@ -1,5 +1,17 @@
+import { useEffect, useState } from "react";
 import { useStore } from "../store";
-import { Plus, Users, Plug, LayoutDashboard, Sun, Moon, Settings } from "lucide-react";
+import {
+  Plus,
+  Users,
+  Plug,
+  LayoutDashboard,
+  Sun,
+  Moon,
+  Settings,
+  Network,
+  Timer,
+  Inbox,
+} from "lucide-react";
 
 interface Props {
   onNew: () => void;
@@ -12,6 +24,18 @@ export function IconRail({ onNew }: Props) {
   const setViewMode = useStore((s) => s.setViewMode);
   const theme = useStore((s) => s.theme);
   const toggleTheme = useStore((s) => s.toggleTheme);
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    const refresh = () =>
+      window.inboxAPI.list().then((items) =>
+        setUnread(items.filter((i) => !i.read).length)
+      );
+    void refresh();
+    return window.inboxAPI.onChanged(() => {
+      void refresh();
+    });
+  }, []);
 
   const isKanban = activePanel === "chat" && viewMode === "kanban";
 
@@ -46,12 +70,37 @@ export function IconRail({ onNew }: Props) {
           <Users size={16} />
         </button>
         <button
+          className={`iconrail-btn${activePanel === "squads" ? " iconrail-btn-active" : ""}`}
+          onClick={() => setPanel("squads")}
+          title="Squads"
+          aria-label="Squads"
+        >
+          <Network size={16} />
+        </button>
+        <button
           className={`iconrail-btn${activePanel === "plugins" ? " iconrail-btn-active" : ""}`}
           onClick={() => setPanel("plugins")}
           title="插件 (Plugins)"
           aria-label="插件面板"
         >
           <Plug size={16} />
+        </button>
+        <button
+          className={`iconrail-btn${activePanel === "autopilots" ? " iconrail-btn-active" : ""}`}
+          onClick={() => setPanel("autopilots")}
+          title="Autopilots"
+          aria-label="Autopilots"
+        >
+          <Timer size={16} />
+        </button>
+        <button
+          className={`iconrail-btn${activePanel === "inbox" ? " iconrail-btn-active" : ""}`}
+          onClick={() => setPanel("inbox")}
+          title="Inbox"
+          aria-label="Inbox"
+        >
+          <Inbox size={16} />
+          {unread > 0 && <span className="iconrail-dot">{unread > 9 ? "9+" : unread}</span>}
         </button>
       </div>
 

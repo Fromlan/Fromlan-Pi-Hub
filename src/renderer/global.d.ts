@@ -5,6 +5,9 @@ import type {
   PluginAPI,
   AgentAPI,
   IssueAPI,
+  SquadAPI,
+  AutopilotAPI,
+  InboxAPI,
 } from "../preload/index";
 
 declare global {
@@ -14,6 +17,9 @@ declare global {
     pluginAPI: PluginAPI;
     agentAPI: AgentAPI;
     issueAPI: IssueAPI;
+    squadAPI: SquadAPI;
+    autopilotAPI: AutopilotAPI;
+    inboxAPI: InboxAPI;
     useStoreDevtools: typeof import("./store").useStore;
   }
 }

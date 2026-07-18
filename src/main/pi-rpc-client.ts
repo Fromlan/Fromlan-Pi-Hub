@@ -7,6 +7,12 @@ import { homedir } from "os";
 
 /** stdout 累积缓冲上限，防止故障子进程刷屏导致主进程 OOM。 */
 const MAX_BUFFER = 64 * 1024 * 1024;
+/** send() 默认超时，避免挂死的 pi 让 get_state / getModels 永久 pending。 */
+const DEFAULT_SEND_TIMEOUT_MS = 30_000;
+/** close()：stdin EOF 后等 exit 的宽限；超时则 kill。 */
+const CLOSE_KILL_MS = 5_000;
+/** close()：绝对上限——即使 kill 后仍无 exit/close，也必须 finalize。 */
+const CLOSE_HARD_TIMEOUT_MS = 8_000;
 
 export interface PiRpcClientOptions {
   provider: string;
@@ -36,6 +42,18 @@ interface PendingWaiter {
 }
 
 /**
+ * shell:true 时（Windows .cmd/.bat），用户可控参数若含 cmd 元字符会被注入。
+ * spawn 前拒绝危险字符；.exe + shell:false 路径不受影响。
+ */
+const SHELL_UNSAFE = /[\r\n&|<>^%!"]/;
+function assertShellSafe(value: string | undefined, label: string): void {
+  if (value == null || value === "") return;
+  if (SHELL_UNSAFE.test(value)) {
+    throw new Error(`不安全的 ${label}（含 shell 元字符）`);
+  }
+}
+
+/**
  * 解析 pi 可执行文件路径与启动模式（缓存一次）。
  *
  * Windows：`where pi` 通常返回多行——无扩展名的 shell 脚本、`pi.cmd`、`pi.exe` 等。
@@ -44,7 +62,7 @@ interface PendingWaiter {
  * - 无扩展名文件用 shell:false 直接 spawn 会 ENOENT。
  * 因此优先选 .exe（shell:false），否则退回 .cmd/.bat（shell:true）。
  * 非 Windows：which 结果直接 shell:false。
- * 全部失败：回退裸 "pi" + shell:true。
+ * 全部失败：回退裸 "pi" + shell:true（启动时仍会做参数消毒）。
  */
 let resolvedPi: ResolvedPi | undefined;
 function resolvePi(): ResolvedPi {
@@ -183,6 +201,19 @@ export class PiRpcClient extends EventEmitter {
     };
 
     const { cmd, useShell } = resolvePi();
+    if (useShell) {
+      // shell:true 时参数经 cmd 拼接，必须消毒用户可控字段与注入路径
+      assertShellSafe(this.opts.provider, "provider");
+      assertShellSafe(this.opts.model, "model");
+      assertShellSafe(this.opts.cwd, "cwd");
+      assertShellSafe(this.opts.sessionId, "sessionId");
+      assertShellSafe(this.opts.agentName, "agentName");
+      for (let i = 0; i < args.length; i++) {
+        // 跳过纯 flag（以 -- 开头且无空格的）
+        if (args[i].startsWith("--") && !args[i].includes("=")) continue;
+        assertShellSafe(args[i], `arg[${i}]`);
+      }
+    }
     this.child = spawn(cmd, args, {
       cwd: this.opts.cwd,
       env: mergedEnv,
@@ -215,7 +246,12 @@ export class PiRpcClient extends EventEmitter {
     // 缓冲上限保护：超限说明子进程异常刷屏，丢弃缓冲并强制关闭，避免 OOM。
     if (this.buffer.length > MAX_BUFFER) {
       this.buffer = Buffer.alloc(0);
-      this.emit("error", new Error("Pi stdout buffer overflow, killing process"));
+      const overflowErr = new Error("Pi stdout buffer overflow, killing process");
+      this.emit("error", overflowErr);
+      for (const [id, p] of this.pending) {
+        p.reject(overflowErr);
+        this.pending.delete(id);
+      }
       try {
         this.child?.kill();
       } catch {
@@ -255,21 +291,47 @@ export class PiRpcClient extends EventEmitter {
     if (typeof parsed.type === "string") this.emit(parsed.type, parsed);
   }
 
-  /** 发送命令并等待响应（基于 id 的 request/response）。 */
-  send<T = unknown>(command: Record<string, unknown>, correlationId?: string): Promise<T> {
+  /**
+   * 发送命令并等待响应（基于 id 的 request/response）。
+   * @param timeoutMs 超时毫秒；传 0 禁用超时。默认 30s。
+   */
+  send<T = unknown>(
+    command: Record<string, unknown>,
+    correlationId?: string,
+    timeoutMs: number = DEFAULT_SEND_TIMEOUT_MS
+  ): Promise<T> {
     if (this.closed || !this.child?.stdin) {
       return Promise.reject(new Error("Pi process has exited"));
     }
     const id = correlationId ?? randomUUID();
     const payload = JSON.stringify({ ...command, id }) + "\n";
     return new Promise<T>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const clear = () => {
+        if (timer !== undefined) clearTimeout(timer);
+      };
       this.pending.set(id, {
-        resolve: resolve as (data: unknown) => void,
-        reject,
+        resolve: (data) => {
+          clear();
+          resolve(data as T);
+        },
+        reject: (err) => {
+          clear();
+          reject(err);
+        },
       });
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          const waiter = this.pending.get(id);
+          if (!waiter) return;
+          this.pending.delete(id);
+          waiter.reject(new Error(`Pi RPC timeout after ${timeoutMs}ms (${String(command.type)})`));
+        }, timeoutMs);
+      }
       try {
         this.child!.stdin!.write(payload);
       } catch (e) {
+        clear();
         this.pending.delete(id);
         reject(e as Error);
       }
@@ -284,7 +346,7 @@ export class PiRpcClient extends EventEmitter {
     this.child.stdin.write(JSON.stringify(command) + "\n");
   }
 
-  /** 优雅关闭（stdin EOF + 5s 兜底 kill）。 */
+  /** 优雅关闭（stdin EOF → 5s kill → 8s 绝对 finalize，杜绝永久挂起）。 */
   close(): Promise<void> {
     if (this.closed) return Promise.resolve();
     if (this.closePromise) return this.closePromise;
@@ -314,7 +376,8 @@ export class PiRpcClient extends EventEmitter {
         // 子进程可能已死，忽略；兜底计时器会触发 kill
       }
       setTimeout(() => {
-        if (!settled && this.child && !this.child.killed) {
+        if (settled) return;
+        if (this.child && !this.child.killed) {
           try {
             this.child.kill();
           } catch {
@@ -322,7 +385,11 @@ export class PiRpcClient extends EventEmitter {
             finalize("kill-failed");
           }
         }
-      }, 5000);
+      }, CLOSE_KILL_MS);
+      // 绝对上限：kill 已发出但 exit/close 永不来时，仍必须 settle
+      setTimeout(() => {
+        if (!settled) finalize("hard-timeout");
+      }, CLOSE_HARD_TIMEOUT_MS);
     });
     return this.closePromise;
   }

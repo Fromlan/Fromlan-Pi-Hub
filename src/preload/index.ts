@@ -18,6 +18,15 @@ import {
   type IssueStatus,
   type Assignee,
   type Comment,
+  type Task,
+  type IssueRerunOpts,
+  type AppSettings,
+  type Squad,
+  type SquadCreateInput,
+  type Autopilot,
+  type AutopilotCreateInput,
+  type AutopilotRun,
+  type InboxItem,
 } from "../shared/types";
 
 /** 包装 ipcRenderer.on，返回取消订阅函数（供 React useEffect 清理）。 */
@@ -80,6 +89,18 @@ const appAPI = {
   /** 唤起系统文件夹选择对话框，用户取消返回 null。 */
   pickDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC.appPickDirectory),
+  /** 在系统文件管理器中打开指定路径并选中目标。 */
+  revealInExplorer: (p: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.appRevealInExplorer, p),
+  /** 用系统默认应用打开路径（文件夹用资源管理器打开，文件用默认编辑器）。 */
+  openInExplorer: (p: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.appOpenInExplorer, p),
+  getSettings: (): Promise<AppSettings> =>
+    ipcRenderer.invoke(IPC.appGetSettings),
+  updateSettings: (
+    patch: Partial<AppSettings>
+  ): Promise<IpcResult<{ settings: AppSettings }>> =>
+    ipcRenderer.invoke(IPC.appUpdateSettings, patch),
 };
 
 /** 读取结果用判别联合：成功返回 PluginFile，失败返回 { ok:false, error }。pluginAPI.read 与 agentAPI.fileRead 共用。 */
@@ -107,6 +128,8 @@ const pluginAPI = {
     name: string
   ): Promise<IpcResult<Record<string, never>>> =>
     ipcRenderer.invoke(IPC.pluginDelete, type, name),
+  importSkillZip: (): Promise<IpcResult<{ name: string }>> =>
+    ipcRenderer.invoke(IPC.pluginImportSkillZip),
   onChanged: (cb: (p: PluginChangedPayload) => void) =>
     subscribe<PluginChangedPayload>(IPC.pluginChanged, cb),
 };
@@ -179,6 +202,16 @@ const issueAPI = {
     status: IssueStatus
   ): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(IPC.issueStatus, { id, status }),
+  /** Multica：手动重新派活。 */
+  rerun: (
+    id: string,
+    opts?: IssueRerunOpts
+  ): Promise<
+    IpcResult<{ task: Task | null; skipped?: string }>
+  > => ipcRenderer.invoke(IPC.issueRerun, { id, opts }),
+  taskList: (): Promise<Task[]> => ipcRenderer.invoke(IPC.taskList),
+  taskListByIssue: (issueId: string): Promise<Task[]> =>
+    ipcRenderer.invoke(IPC.taskListByIssue, issueId),
   commentList: (issueId: string): Promise<Comment[]> =>
     ipcRenderer.invoke(IPC.commentList, issueId),
   commentAdd: (
@@ -198,12 +231,74 @@ const issueAPI = {
     subscribe<Comment>(IPC.commentAdded, cb),
   onCommentDeleted: (cb: (p: { id: string }) => void) =>
     subscribe<{ id: string }>(IPC.commentDeleted, cb),
+  onTaskChanged: (cb: (t: Task) => void) =>
+    subscribe<Task>(IPC.taskChanged, cb),
 };
 
 contextBridge.exposeInMainWorld("issueAPI", issueAPI);
+
+const squadAPI = {
+  list: (): Promise<Squad[]> => ipcRenderer.invoke(IPC.squadList),
+  get: (id: string): Promise<Squad | null> =>
+    ipcRenderer.invoke(IPC.squadGet, id),
+  create: (
+    input: SquadCreateInput
+  ): Promise<IpcResult<{ squad: Squad }>> =>
+    ipcRenderer.invoke(IPC.squadCreate, input),
+  update: (
+    id: string,
+    patch: Partial<Squad>
+  ): Promise<IpcResult<{ squad: Squad }>> =>
+    ipcRenderer.invoke(IPC.squadUpdate, { id, patch }),
+  delete: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.squadDelete, id),
+  onChanged: (cb: (s: Squad) => void) =>
+    subscribe<Squad>(IPC.squadChanged, cb),
+};
+
+const autopilotAPI = {
+  list: (): Promise<Autopilot[]> => ipcRenderer.invoke(IPC.autopilotList),
+  create: (
+    input: AutopilotCreateInput
+  ): Promise<IpcResult<{ autopilot: Autopilot }>> =>
+    ipcRenderer.invoke(IPC.autopilotCreate, input),
+  update: (
+    id: string,
+    patch: Partial<Autopilot>
+  ): Promise<IpcResult<{ autopilot: Autopilot }>> =>
+    ipcRenderer.invoke(IPC.autopilotUpdate, { id, patch }),
+  delete: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.autopilotDelete, id),
+  runNow: (
+    id: string
+  ): Promise<IpcResult<{ run: AutopilotRun }>> =>
+    ipcRenderer.invoke(IPC.autopilotRunNow, id),
+  runs: (id?: string): Promise<AutopilotRun[]> =>
+    ipcRenderer.invoke(IPC.autopilotRuns, id),
+  onChanged: (cb: (a: Autopilot) => void) =>
+    subscribe<Autopilot>(IPC.autopilotChanged, cb),
+};
+
+const inboxAPI = {
+  list: (): Promise<InboxItem[]> => ipcRenderer.invoke(IPC.inboxList),
+  markRead: (id: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.inboxMarkRead, id),
+  markAllRead: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(IPC.inboxMarkAllRead),
+  clear: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.inboxClear),
+  onChanged: (cb: (item: InboxItem) => void) =>
+    subscribe<InboxItem>(IPC.inboxChanged, cb),
+};
+
+contextBridge.exposeInMainWorld("squadAPI", squadAPI);
+contextBridge.exposeInMainWorld("autopilotAPI", autopilotAPI);
+contextBridge.exposeInMainWorld("inboxAPI", inboxAPI);
 
 export type SessionAPI = typeof sessionAPI;
 export type AppAPI = typeof appAPI;
 export type PluginAPI = typeof pluginAPI;
 export type AgentAPI = typeof agentAPI;
 export type IssueAPI = typeof issueAPI;
+export type SquadAPI = typeof squadAPI;
+export type AutopilotAPI = typeof autopilotAPI;
+export type InboxAPI = typeof inboxAPI;

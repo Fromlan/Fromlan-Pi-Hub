@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { join } from "path";
 import { homedir } from "os";
 import { statSync } from "fs";
@@ -6,6 +6,14 @@ import { SessionManager } from "./session-manager";
 import * as pluginManager from "./plugin-manager";
 import * as agentManager from "./agent-manager";
 import * as issueStore from "./issue-store";
+import * as issueRunner from "./issue-runner";
+import * as settingsStore from "./settings-store";
+import * as squadStore from "./squad-store";
+import * as autopilotStore from "./autopilot-store";
+import * as autopilotManager from "./autopilot-manager";
+import * as inboxStore from "./inbox-store";
+import { uniqueMentions } from "../shared/mention";
+import { startTaskMonitor, stopTaskMonitor } from "./task-monitor";
 import {
   IPC,
   type StartSessionOpts,
@@ -15,6 +23,12 @@ import {
   type IssueCreateInput,
   type IssueStatus,
   type Assignee,
+  type IssueRerunOpts,
+  type AppSettings,
+  type SquadCreateInput,
+  type AutopilotCreateInput,
+  type Squad,
+  type Autopilot,
 } from "../shared/types";
 
 const sessionManager = new SessionManager();
@@ -25,6 +39,16 @@ function broadcast(channel: string, payload: unknown): void {
     if (!w.isDestroyed()) w.webContents.send(channel, payload);
   }
 }
+
+issueRunner.initIssueRunner({
+  sessions: sessionManager,
+  broadcast,
+  IPC: {
+    issueChanged: IPC.issueChanged,
+    commentAdded: IPC.commentAdded,
+    taskChanged: IPC.taskChanged,
+  },
+});
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -59,6 +83,18 @@ sessionManager.on("spawned", (snap) => broadcast(IPC.sessionSpawned, snap));
 sessionManager.on("killed", (id) => broadcast(IPC.sessionKilled, id));
 sessionManager.on("change", (snap) => broadcast(IPC.sessionChange, snap));
 sessionManager.on("event", (payload) => broadcast(IPC.sessionEvent, payload));
+sessionManager.on(
+  "issue-session-completed",
+  (p: { sessionId: string; summary: string }) => {
+    issueRunner.onSessionCompleted(p.sessionId, p.summary);
+  }
+);
+sessionManager.on(
+  "issue-session-failed",
+  (p: { sessionId: string; error: string }) => {
+    issueRunner.onSessionFailed(p.sessionId, p.error);
+  }
+);
 
 // ── Session IPC ──
 ipcMain.handle(IPC.sessionList, () => sessionManager.list());
@@ -67,6 +103,7 @@ ipcMain.handle(IPC.sessionGet, (_e, id: string) => sessionManager.get(id) ?? nul
 ipcMain.handle(IPC.sessionStart, async (_e, opts: StartSessionOpts) => {
   try {
     const snap = await sessionManager.start(opts);
+    issueRunner.setDispatchDefaults(snap.provider, snap.model, snap.cwd);
     return { ok: true, session: snap };
   } catch (e) {
     console.error("[main] sessionStart:", e);
@@ -171,6 +208,28 @@ ipcMain.handle(IPC.appPathStat, (_e, p: string) => {
   }
 });
 
+// ── 文件系统 ──
+
+// 在系统文件管理器中显示路径（选中文件或打开文件夹）
+ipcMain.handle(IPC.appRevealInExplorer, async (_e, p: string) => {
+  try {
+    await shell.showItemInFolder(p);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+// 用系统默认应用打开路径（文件夹打开资源管理器，文件用默认编辑器）
+ipcMain.handle(IPC.appOpenInExplorer, async (_e, p: string) => {
+  try {
+    await shell.openPath(p);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
 // 唤起系统文件夹选择对话框；用户取消返回 null
 ipcMain.handle(IPC.appPickDirectory, async () => {
   const win = BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
@@ -181,6 +240,24 @@ ipcMain.handle(IPC.appPickDirectory, async () => {
   });
   if (r.canceled || r.filePaths.length === 0) return null;
   return r.filePaths[0];
+});
+
+ipcMain.handle(IPC.appGetSettings, () => settingsStore.getSettings());
+ipcMain.handle(IPC.appUpdateSettings, (_e, patch: Partial<AppSettings>) => {
+  try {
+    const settings = settingsStore.updateSettings(patch);
+    const d = issueRunner.getDispatchDefaults();
+    if (settings.defaultProvider || settings.defaultModel || settings.defaultCwd) {
+      issueRunner.setDispatchDefaults(
+        settings.defaultProvider || d.provider,
+        settings.defaultModel || d.model,
+        settings.defaultCwd || d.cwd
+      );
+    }
+    return { ok: true, settings };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 });
 
 // ── Plugin IPC ──
@@ -316,14 +393,16 @@ ipcMain.handle(IPC.agentFileDelete, (_e, name: string, type: PluginType, file: s
   }
 });
 
-// ── Issue IPC（阶段 1） ──
+// ── Issue IPC（阶段 1 + Assign 派活） ──
 ipcMain.handle(IPC.issueList, () => issueStore.listIssues());
 ipcMain.handle(IPC.issueGet, (_e, id: string) => issueStore.getIssue(id) ?? null);
 
-ipcMain.handle(IPC.issueCreate, (_e, input: IssueCreateInput) => {
+ipcMain.handle(IPC.issueCreate, async (_e, input: IssueCreateInput) => {
   try {
     const issue = issueStore.createIssue(input);
     broadcast(IPC.issueCreated, issue);
+    // 创建时已指定 agent 且非 backlog → 自动派活
+    void issueRunner.maybeEnqueue(issue.id, "create");
     return { ok: true, issue };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -332,10 +411,28 @@ ipcMain.handle(IPC.issueCreate, (_e, input: IssueCreateInput) => {
 
 ipcMain.handle(
   IPC.issueUpdate,
-  (_e, { id, patch }: { id: string; patch: Record<string, unknown> }) => {
-    const issue = issueStore.updateIssue(id, patch as Partial<Parameters<typeof issueStore.updateIssue>[1]>);
-    if (issue) broadcast(IPC.issueChanged, issue);
-    return { ok: !!issue };
+  async (_e, { id, patch }: { id: string; patch: Record<string, unknown> }) => {
+    const before = issueStore.getIssue(id);
+    const issue = issueStore.updateIssue(
+      id,
+      patch as Partial<Parameters<typeof issueStore.updateIssue>[1]>
+    );
+    if (!issue) return { ok: false };
+
+    broadcast(IPC.issueChanged, issue);
+
+    const assigneeChanged =
+      patch.assignee !== undefined &&
+      JSON.stringify(before?.assignee) !== JSON.stringify(issue.assignee);
+    const statusChanged =
+      patch.status !== undefined && before?.status !== issue.status;
+
+    if (assigneeChanged) {
+      void issueRunner.maybeEnqueue(id, "assign");
+    } else if (statusChanged) {
+      void issueRunner.maybeEnqueue(id, "status");
+    }
+    return { ok: true };
   }
 );
 
@@ -347,20 +444,38 @@ ipcMain.handle(IPC.issueDelete, (_e, id: string) => {
 
 ipcMain.handle(
   IPC.issueAssign,
-  (_e, { id, assignee }: { id: string; assignee: Assignee }) => {
+  async (_e, { id, assignee }: { id: string; assignee: Assignee }) => {
     const issue = issueStore.assignIssue(id, assignee);
-    if (issue) broadcast(IPC.issueChanged, issue);
-    return { ok: !!issue };
+    if (!issue) return { ok: false };
+    broadcast(IPC.issueChanged, issue);
+    void issueRunner.maybeEnqueue(id, "assign");
+    return { ok: true };
   }
 );
 
 ipcMain.handle(
   IPC.issueStatus,
-  (_e, { id, status }: { id: string; status: IssueStatus }) => {
+  async (_e, { id, status }: { id: string; status: IssueStatus }) => {
     const issue = issueStore.setIssueStatus(id, status);
-    if (issue) broadcast(IPC.issueChanged, issue);
-    return { ok: !!issue };
+    if (!issue) return { ok: false };
+    broadcast(IPC.issueChanged, issue);
+    void issueRunner.maybeEnqueue(id, "status");
+    return { ok: true };
   }
+);
+
+ipcMain.handle(
+  IPC.issueRerun,
+  async (_e, { id, opts }: { id: string; opts?: IssueRerunOpts }) => {
+    const r = await issueRunner.maybeEnqueue(id, "rerun", opts);
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, task: r.task, skipped: r.skipped };
+  }
+);
+
+ipcMain.handle(IPC.taskList, () => issueRunner.listAllTasks());
+ipcMain.handle(IPC.taskListByIssue, (_e, issueId: string) =>
+  issueRunner.listTasksForIssue(issueId)
 );
 
 // ── Comment IPC（阶段 1） ──
@@ -378,8 +493,16 @@ ipcMain.handle(
     >
   ) => {
     try {
-      const c = issueStore.addComment(input);
+      const mentions =
+        input.mentions?.length > 0
+          ? input.mentions
+          : uniqueMentions(input.body).map((m) => ({
+              kind: m.kind,
+              id: m.id,
+            }));
+      const c = issueStore.addComment({ ...input, mentions });
       broadcast(IPC.commentAdded, c);
+      void issueRunner.handleCommentMentions(c);
       return { ok: true, comment: c };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
@@ -393,10 +516,116 @@ ipcMain.handle(IPC.commentDelete, (_e, id: string) => {
   return { ok };
 });
 
+// ── Squad IPC ──
+ipcMain.handle(IPC.squadList, () => squadStore.listSquads());
+ipcMain.handle(IPC.squadGet, (_e, id: string) => squadStore.getSquad(id) ?? null);
+ipcMain.handle(IPC.squadCreate, (_e, input: SquadCreateInput) => {
+  try {
+    const squad = squadStore.createSquad(input);
+    broadcast(IPC.squadChanged, squad);
+    return { ok: true, squad };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+ipcMain.handle(
+  IPC.squadUpdate,
+  (_e, { id, patch }: { id: string; patch: Partial<Squad> }) => {
+    const squad = squadStore.updateSquad(id, patch);
+    if (!squad) return { ok: false, error: "Squad 不存在" };
+    broadcast(IPC.squadChanged, squad);
+    return { ok: true, squad };
+  }
+);
+ipcMain.handle(IPC.squadDelete, (_e, id: string) => {
+  const ok = squadStore.deleteSquad(id);
+  return { ok };
+});
+
+// ── Autopilot IPC ──
+ipcMain.handle(IPC.autopilotList, () => autopilotStore.listAutopilots());
+ipcMain.handle(IPC.autopilotCreate, (_e, input: AutopilotCreateInput) => {
+  try {
+    const ap = autopilotStore.createAutopilot(input);
+    autopilotManager.onAutopilotChanged(ap);
+    return { ok: true, autopilot: ap };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+ipcMain.handle(
+  IPC.autopilotUpdate,
+  (_e, { id, patch }: { id: string; patch: Partial<Autopilot> }) => {
+    const ap = autopilotStore.updateAutopilot(id, patch);
+    if (!ap) return { ok: false, error: "Autopilot 不存在" };
+    autopilotManager.onAutopilotChanged(ap);
+    return { ok: true, autopilot: ap };
+  }
+);
+ipcMain.handle(IPC.autopilotDelete, (_e, id: string) => {
+  const ok = autopilotStore.deleteAutopilot(id);
+  if (ok) autopilotManager.onAutopilotDeleted(id);
+  return { ok };
+});
+ipcMain.handle(IPC.autopilotRunNow, async (_e, id: string) => {
+  return autopilotManager.fireAutopilot(id, true);
+});
+ipcMain.handle(IPC.autopilotRuns, (_e, id?: string) =>
+  autopilotStore.listRuns(id)
+);
+
+// ── Inbox IPC ──
+ipcMain.handle(IPC.inboxList, () => inboxStore.listInbox());
+ipcMain.handle(IPC.inboxMarkRead, (_e, id: string) => {
+  const item = inboxStore.markRead(id);
+  if (item) broadcast(IPC.inboxChanged, item);
+  return { ok: !!item };
+});
+ipcMain.handle(IPC.inboxMarkAllRead, () => {
+  inboxStore.markAllRead();
+  return { ok: true };
+});
+ipcMain.handle(IPC.inboxClear, () => {
+  inboxStore.clearInbox();
+  return { ok: true };
+});
+
+// ── Skill zip 导入 ──
+ipcMain.handle(IPC.pluginImportSkillZip, async () => {
+  const win =
+    BrowserWindow.getFocusedWindow() ??
+    mainWindow ??
+    BrowserWindow.getAllWindows()[0];
+  if (!win) return { ok: false, error: "无窗口" };
+  const r = await dialog.showOpenDialog(win, {
+    title: "导入 Skill Zip",
+    filters: [{ name: "Zip", extensions: ["zip"] }],
+    properties: ["openFile", "dontAddToRecent"],
+  });
+  if (r.canceled || r.filePaths.length === 0) {
+    return { ok: false, error: "已取消" };
+  }
+  try {
+    const { name } = pluginManager.importSkillZip(r.filePaths[0]);
+    broadcastPlugin({ type: "skills", name, action: "created" });
+    return { ok: true, name };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
 // ── App 生命周期 ──
 app.whenReady().then(() => {
   sessionManager.loadPersisted();
   createWindow();
+  startTaskMonitor({
+    getSessions: () => sessionManager.list(),
+  });
+  autopilotManager.initAutopilotManager(broadcast);
+});
+
+app.on("will-quit", () => {
+  stopTaskMonitor();
 });
 
 // 所有窗口关闭后退出（macOS 除外，遵循 Electron 惯例）

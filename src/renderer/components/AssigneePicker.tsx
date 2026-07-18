@@ -1,9 +1,9 @@
+import { useEffect } from "react";
 import { useStore } from "../store";
 import type { Assignee } from "../../shared/types";
 
 /**
- * Polymorphic assignee picker —— 阶段 1 仅 agent 可选；
- * human / squad 渲染 disabled + tooltip（推迟到阶段 3/6）。
+ * Polymorphic assignee picker：agent / squad 可选；human 仅展示。
  */
 export function AssigneePicker({
   value,
@@ -13,6 +13,15 @@ export function AssigneePicker({
   onChange: (a: Assignee) => void;
 }) {
   const agents = useStore((s) => s.agents);
+  const squads = useStore((s) => s.squads);
+  const setSquads = useStore((s) => s.setSquads);
+
+  useEffect(() => {
+    if (squads.length === 0) {
+      window.squadAPI.list().then(setSquads);
+    }
+  }, [squads.length, setSquads]);
+
   return (
     <select
       className="assignee-picker"
@@ -30,12 +39,17 @@ export function AssigneePicker({
           {a.name}
         </option>
       ))}
-      <option value="human:default" disabled title="v0.9 才可用">
-        Human（暂不可用）
-      </option>
-      <option value="squad:" disabled title="v0.6 才可用">
-        Squad（暂不可用）
-      </option>
+      {squads.length > 0 && (
+        <option value="squad:" disabled>
+          — Squad —
+        </option>
+      )}
+      {squads.map((s) => (
+        <option key={s.id} value={`squad:${s.id}`}>
+          Squad: {s.name}
+        </option>
+      ))}
+      <option value="human:default">Human (me)</option>
     </select>
   );
 }

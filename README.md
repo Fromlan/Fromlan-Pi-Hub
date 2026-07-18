@@ -35,19 +35,18 @@ Fromlan Pi Hub 采用**三进程模型**，追求进程隔离和崩溃恢复：
 ```
 ┌──────────────────────────────────────────────────┐
 │  渲染进程 (React 19 + Zustand)                     │
-│  Kanban · IssueDetail · MessageList · Composer     │
+│  Kanban · IssueDetail · Squads · Autopilots · Inbox│
 │  store.applyEvent 增量拼接流式输出                    │
 └──────────────────┬───────────────────────────────┘
                    │ contextBridge (preload)
-                   │ sessionAPI / appAPI / pluginAPI / agentAPI / issueAPI
+                   │ session / issue / squad / autopilot / inbox / …
 ┌──────────────────┴───────────────────────────────┐
 │  主进程 (Electron)                                 │
 │  ipcMain.handle  +  事件 broadcast                  │
 │                                                   │
-│  SessionManager — 多会话状态机                       │
-│  PiRpcClient — 每会话一个                           │
-│  IssueStore / AgentManager / PluginManager         │
-│  TaskMonitor / SquadManager / AutopilotManager     │
+│  SessionManager · issue-runner · task-monitor      │
+│  Squad / Autopilot / Inbox / Settings 持久化         │
+│  PluginManager · AgentManager · PiRpcClient        │
 └──────────────────┬───────────────────────────────┘
                    │ stdin/stdout (JSONL)
           ┌────────┴────────┐  ┌────────────────┐
@@ -71,33 +70,40 @@ Fromlan Pi Hub 采用**三进程模型**，追求进程隔离和崩溃恢复：
 
 **Issue 与 Session 的关系是 1:N。** Issue 是工作单元；Session 是执行尝试。一个 Issue 可以派生多个 Session（重试、替代方案、后续任务）。看板才是"真相之源"——聊天记录只是执行日志。
 
+**Task 是每一次派活。** Assign / `@mention` / Autopilot / Rerun 都产生一条 Task（六态：queued → dispatched → running → completed | failed | cancelled）。超时与可重试错误由 task-monitor 扫描；失败时 Issue 回滚到 `todo`。
+
 ---
 
 ## 功能
 
-### 当前 (v0.4.0)
-- **多会话管理** — 创建、监控、中止、关闭独立的 pi 会话
-- **Kanban 看板** — 7 列 Issue 追踪（backlog → todo → in_progress → in_review → done / blocked / cancelled）
-- **Issue 详情页** — 元数据、assignee 选择器、评论时间线、一键"Run"派生会话
-- **流式 Markdown 渲染** — 助手回复实时逐字显示、代码高亮、thinking 折叠、工具调用可视化
-- **Agent 管理** — 增删改独立 Agent，每个可配置私有的 prompts、skills、extensions
-- **插件编辑器** — `~/.pi/agent/` 下全局 prompt 模板、skill、extension 的 CRUD
-- **深色优先双主题** — OKLCH 色彩空间、Inter + Geist Mono 字体、离线可用
+### 当前 (v0.9.0)
+- **多会话管理** — 创建、监控、中止、关闭独立的 pi 会话；历史快照可继续对话
+- **Kanban 看板** — Multica/Linear 风格：280px 列、状态 tint、`PriorityIcon` 卡片、Working chip；拖拽改状态；Assign 即派活
+- **Issue 详情** — 文档主栏 + 右侧 Properties；截止日期 / 父 Issue；评论 `@mention`；重新派活；Task 执行历史
+- **任务可靠性** — 派活/执行双超时、错误分类重试（可配置）、失败写回评论 + 看板回滚
+- **Squad 路由** — Leader Agent 读 roster → `@` 成员 → 成员各自起 Task（路由层，不增能力）
+- **Autopilot** — cron 周期触发（创建 Issue 并派活 / 直接跑）；手动 Run now + 触发日志
+- **Inbox + 桌面通知** — 仅给人看（被 mention / 指派 / 任务失败）；Agent 不进 Inbox
+- **Agent / Skill 管理** — 独立 Agent 目录隔离；全局与 Agent 级 `SKILL.md`；zip 导入 Skill
+- **流式 Markdown** — 实时助手输出、代码高亮、thinking 折叠、工具调用可视化
+- **设置** — 默认 provider/model/cwd、超时与重试次数、通知策略、主题
 
 ### 路线图
 | 版本 | 主题 | 状态 |
 |------|------|------|
-| v0.4.0 | Issue + Kanban | ✅ 已发布 |
-| v0.5.0 | 任务超时 / 重试 / 回滚 | 计划中 |
-| v0.6.0 | Squad 路由（组长 Agent 派活给专员） | 计划中 |
-| v0.7.0 | Agent Skills 标准对齐（SKILL.md） | 计划中 |
-| v0.8.0 | Autopilot Cron 调度 | 计划中 |
-| v0.9.0 | Inbox + 桌面通知 | 计划中 |
-| v1.0.0 | 正式 GA —— 完整的本地 Agent 工作台 | 目标 |
+| v0.4.0 | Issue + Kanban | ✅ |
+| v0.5.0 | 任务超时 / 重试 / 回滚 | ✅ |
+| v0.6.0 | Squad 路由 + `@mention` | ✅ |
+| v0.7.0 | Agent Skills（SKILL.md + zip） | ✅ |
+| v0.8.0 | Autopilot Cron | ✅ |
+| v0.9.0 | Inbox + 桌面通知 | ✅ |
+| v1.0.0 | 正式 GA —— 打磨与验收 | 目标 |
+
+灵感来自 [Multica](https://github.com/multica-ai/multica) 的任务模型与编排哲学；实现为 **pi-only、纯本地、桌面原生**。详见 [ROADMAP.md](./ROADMAP.md)。
 
 ### 明确不做
 - 多 CLI 支持 — **只做 pi**，这是立项定位
-- 云端运行时、WebSocket 队列、多人协作
+- 云端运行时、WebSocket 队列、多人协作 / 多 Workspace
 - 远程 `/reload` 注入（提示用户手动 reload）
 
 ---
@@ -134,6 +140,7 @@ npm run typecheck # 全量类型检查
 - **UI**: React 19 + TypeScript + Zustand 5
 - **富文本**: react-markdown + remark-gfm + rehype-highlight
 - **图标**: lucide-react（不用 emoji）
+- **调度**: node-cron + cronstrue
 - **打包**: electron-builder（Windows 便携版 `.exe`）
 - **子进程**: pi RPC 模式（stdin/stdout JSONL 分帧）
 
@@ -199,19 +206,18 @@ Fromlan Pi Hub uses a **three-process model** designed for process isolation and
 ```
 ┌──────────────────────────────────────────────────┐
 │  Renderer (React 19 + Zustand)                    │
-│  Kanban · Issue Detail · MessageList · Composer   │
+│  Kanban · IssueDetail · Squads · Autopilots · Inbox│
 │  store.applyEvent — incremental stream stitching  │
 └──────────────────┬───────────────────────────────┘
                    │ contextBridge (preload)
-                   │ sessionAPI / appAPI / pluginAPI / agentAPI / issueAPI
+                   │ session / issue / squad / autopilot / inbox / …
 ┌──────────────────┴───────────────────────────────┐
 │  Main Process (Electron)                          │
 │  ipcMain.handle  +  event broadcast               │
 │                                                   │
-│  SessionManager — multi-session state machine      │
-│  PiRpcClient — one per session                    │
-│  IssueStore / AgentManager / PluginManager         │
-│  TaskMonitor / SquadManager / AutopilotManager     │
+│  SessionManager · issue-runner · task-monitor      │
+│  Squad / Autopilot / Inbox / Settings stores       │
+│  PluginManager · AgentManager · PiRpcClient        │
 └──────────────────┬───────────────────────────────┘
                    │ stdin/stdout (JSONL)
           ┌────────┴────────┐  ┌────────────────┐
@@ -235,33 +241,40 @@ Fromlan Pi Hub uses a **three-process model** designed for process isolation and
 
 **Issue → Session = 1:N.** An issue is a unit of work; sessions are execution attempts. One issue can spawn multiple sessions (retries, alternative approaches, follow-ups). The Kanban board is the source of truth — chats are execution logs.
 
+**A Task is every dispatch.** Assign / `@mention` / Autopilot / Rerun each create a Task (six states: queued → dispatched → running → completed | failed | cancelled). `task-monitor` enforces dual timeouts and classified retries; failures roll the Issue back to `todo`.
+
 ---
 
 ## Features
 
-### Current (v0.4.0)
-- **Multi-session management** — spawn, monitor, abort, and close independent pi sessions
-- **Kanban board** — 7-column issue tracker (backlog → todo → in_progress → in_review → done / blocked / cancelled)
-- **Issue detail view** — metadata, assignee picker, comment timeline, one-click "Run" to spawn a session
-- **Streaming Markdown rendering** — real-time assistant output with code highlighting, thinking fold, tool call visualization
-- **Agent management** — create/edit/delete isolated agents with private prompts, skills, and extensions
-- **Plugin editor** — CRUD for global prompt templates, skills, and extensions under `~/.pi/agent/`
-- **Dark-first dual-theme** — OKLCH color space, Inter + Geist Mono fonts, no external network dependency
+### Current (v0.9.0)
+- **Multi-session management** — spawn, monitor, abort, close; resume from history snapshots
+- **Kanban board** — Multica/Linear-style: 280px columns, status tint, `PriorityIcon` cards, Working chip; drag status; assign to auto-dispatch
+- **Issue detail** — document main + Properties sidebar; due date / parent; comment `@mention`; rerun; Task history
+- **Task reliability** — dispatch/running timeouts, classified retries (configurable), failure comments + board rollback
+- **Squad routing** — leader reads roster → `@` members → each member gets a Task (routing only)
+- **Autopilot** — cron triggers (create issue + dispatch / run); Run now + run log
+- **Inbox + desktop notifications** — humans only (mention / assign / task failed); agents never read Inbox
+- **Agent / Skill management** — per-agent isolation; global & agent `SKILL.md`; zip import
+- **Streaming Markdown** — live output, code highlight, thinking fold, tool visualization
+- **Settings** — default provider/model/cwd, timeouts/retries, notify mode, theme
 
 ### Roadmap
 | Stage | Theme | Status |
 |-------|-------|--------|
-| v0.4.0 | Issue + Kanban | ✅ Released |
-| v0.5.0 | Task timeout / retry / rollback | Planned |
-| v0.6.0 | Squad routing (leader agent dispatches to specialists) | Planned |
-| v0.7.0 | Agent Skills standard alignment (SKILL.md) | Planned |
-| v0.8.0 | Autopilot cron scheduling | Planned |
-| v0.9.0 | Inbox + desktop notifications | Planned |
-| v1.0.0 | GA — complete local Agent workstation | Target |
+| v0.4.0 | Issue + Kanban | ✅ |
+| v0.5.0 | Task timeout / retry / rollback | ✅ |
+| v0.6.0 | Squad routing + `@mention` | ✅ |
+| v0.7.0 | Agent Skills (SKILL.md + zip) | ✅ |
+| v0.8.0 | Autopilot cron | ✅ |
+| v0.9.0 | Inbox + desktop notifications | ✅ |
+| v1.0.0 | GA — polish & acceptance | Target |
+
+Inspired by [Multica](https://github.com/multica-ai/multica)'s task model; implemented as **pi-only, local-first, desktop-native**. See [ROADMAP.md](./ROADMAP.md).
 
 ### Explicitly Out of Scope
 - Multi-CLI support — **pi only**, by design
-- Cloud runtimes, WebSocket queues, multi-user collaboration
+- Cloud runtimes, WebSocket queues, multi-user / multi-workspace
 - Remote `/reload` injection (we prompt the user to reload manually)
 
 ---
@@ -298,6 +311,7 @@ npm run typecheck # full type check
 - **UI**: React 19 + TypeScript + Zustand 5
 - **Markdown**: react-markdown + remark-gfm + rehype-highlight
 - **Icons**: lucide-react (no emoji)
+- **Scheduling**: node-cron + cronstrue
 - **Packaging**: electron-builder (Windows portable `.exe`)
 - **Subprocess**: pi RPC mode (stdin/stdout JSONL framing)
 

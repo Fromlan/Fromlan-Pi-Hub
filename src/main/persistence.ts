@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { join } from "path";
+import { join, resolve, sep } from "path";
 import { mkdirSync, existsSync, readFileSync, writeFileSync, unlinkSync, renameSync } from "fs";
 import type { SessionSnapshot } from "../shared/types";
 import type { MsgData } from "../shared/types";
@@ -20,6 +20,30 @@ const BASE = (() => {
   }
 })();
 const MSGS_DIR = join(BASE, "messages");
+
+/** 仅允许安全标识（UUID 等），防止 `../` 穿越 messages/。 */
+const SAFE_SESSION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+
+function assertSafeSessionId(sessionId: string): void {
+  if (typeof sessionId !== "string" || !SAFE_SESSION_ID.test(sessionId) || sessionId.includes("..")) {
+    throw new Error(`拒绝访问：非法 sessionId`);
+  }
+}
+
+/** 解析 messages/{id}.json 并确认仍在 MSGS_DIR 内。 */
+function messagesPath(sessionId: string): string {
+  assertSafeSessionId(sessionId);
+  const base = resolve(MSGS_DIR);
+  const path = resolve(MSGS_DIR, `${sessionId}.json`);
+  const prefix = base.endsWith(sep) ? base : base + sep;
+  if (path !== join(base, `${sessionId}.json`) && !path.startsWith(prefix)) {
+    throw new Error(`拒绝访问：路径超出 messages 目录`);
+  }
+  if (path !== resolve(base, `${sessionId}.json`)) {
+    throw new Error(`拒绝访问：路径超出 messages 目录`);
+  }
+  return path;
+}
 
 function ensureDir(p: string): void {
   if (!existsSync(p)) mkdirSync(p, { recursive: true });
@@ -54,15 +78,17 @@ export function loadSessions(): SessionSnapshot[] {
 
 export function saveMessages(sessionId: string, messages: MsgData[]): void {
   ensureDir(MSGS_DIR);
-  writeFileSync(
-    join(MSGS_DIR, `${sessionId}.json`),
-    JSON.stringify(messages, null, 2),
-    "utf8"
-  );
+  const path = messagesPath(sessionId);
+  atomicWrite(path, messages);
 }
 
 export function loadMessages(sessionId: string): MsgData[] {
-  const path = join(MSGS_DIR, `${sessionId}.json`);
+  let path: string;
+  try {
+    path = messagesPath(sessionId);
+  } catch {
+    return [];
+  }
   if (!existsSync(path)) return [];
   try {
     const raw = readFileSync(path, "utf8");
@@ -75,8 +101,12 @@ export function loadMessages(sessionId: string): MsgData[] {
 // ── 删除 ──
 
 export function deleteSessionData(sessionId: string): void {
-  // 删消息文件
-  const msgPath = join(MSGS_DIR, `${sessionId}.json`);
+  let msgPath: string;
+  try {
+    msgPath = messagesPath(sessionId);
+  } catch {
+    return;
+  }
   if (existsSync(msgPath)) unlinkSync(msgPath);
   // 注意：sessions.json 由调用方负责更新（需要先读再写）
 }

@@ -108,6 +108,20 @@ export function AgentFileEditor({ agentName, type, target, onClose }: Props) {
           </span>
         </h2>
 
+        {type === "skills" && !isNew && (
+          <div className="skill-standard-banner">
+            <strong>Agent Skills</strong>
+            {description && (
+              <p className="muted" style={{ margin: "4px 0 0" }}>
+                {description}
+              </p>
+            )}
+            <p className="muted" style={{ margin: "4px 0 0" }}>
+              文件 <code>SKILL.md</code> — 仅对本 Agent 可见。
+            </p>
+          </div>
+        )}
+
         <label>
           名称
           <input

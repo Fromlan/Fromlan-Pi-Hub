@@ -1,7 +1,7 @@
 {
   "name": "fromlan-pi-hub",
-  "version": "0.2.0",
-  "description": "Fromlan Pi Hub — 桌面客户端：管理多个 pi 进程进行多标签并行对话",
+  "version": "0.9.0",
+  "description": "Fromlan Pi Hub — 本地 pi Agent 工位台：Kanban 派活、Squad、Autopilot、Inbox",
   "author": "Fromlan",
   "main": "dist/main/index.js",
   "scripts": {
@@ -14,8 +14,11 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web"
   },
   "dependencies": {
+    "adm-zip": "^0.6.0",
+    "cronstrue": "^3.24.0",
     "highlight.js": "^11.10.0",
     "lucide-react": "^1.24.0",
+    "node-cron": "^4.6.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.1",
@@ -24,7 +27,9 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",

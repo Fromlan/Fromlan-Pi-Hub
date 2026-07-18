@@ -19,7 +19,7 @@ export function IssueCreateDialog({ onClose }: { onClose: () => void }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<IssuePriority>("medium");
-  const [status, setStatus] = useState<IssueStatus>("backlog");
+  const [status, setStatus] = useState<IssueStatus>("todo");
   const [assignee, setAssignee] = useState<Assignee>({
     kind: "agent",
     id: "",
@@ -39,7 +39,7 @@ export function IssueCreateDialog({ onClose }: { onClose: () => void }) {
       description: description.trim() || undefined,
       priority,
       status,
-      assignee: assignee.id ? assignee : { kind: "agent", id: "default" },
+      assignee: assignee.id ? assignee : { kind: "human", id: "default" },
     });
     setSubmitting(false);
     if (!r.ok) {

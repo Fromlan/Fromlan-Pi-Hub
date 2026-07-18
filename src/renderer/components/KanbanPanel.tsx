@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useStore, groupByStatus, ISSUE_STATUSES, STATUS_LABEL } from "../store";
 import { IssueCard } from "./IssueCard";
 import { IssueCreateDialog } from "./IssueCreateDialog";
+import { IssueStatusIcon } from "./IssueStatusIcon";
 import type { IssueStatus } from "../../shared/types";
 
 export function KanbanPanel() {
@@ -11,12 +12,10 @@ export function KanbanPanel() {
 
   const grouped = useMemo(() => groupByStatus(issues), [issues]);
 
-  // 拖拽：先在本地乐观更新 store，再 IPC；失败回滚 + setNotice
   const handleDrop = (id: string, target: IssueStatus) => {
     const cur = useStore.getState().issues.find((i) => i.id === id);
     if (!cur || cur.status === target) return;
     const prevStatus = cur.status;
-    // 乐观更新
     useStore.getState().upsertIssue({
       ...cur,
       status: target,
@@ -26,19 +25,27 @@ export function KanbanPanel() {
       .setStatus(id, target)
       .then((r) => {
         if (!r.ok) {
-          // 仅回滚 status 字段，保留其他字段的服务器状态
-          const cur = useStore.getState().issues.find((i) => i.id === id);
-          if (cur) {
-            useStore.getState().upsertIssue({ ...cur, status: prevStatus, updatedAt: Date.now() });
+          const cur2 = useStore.getState().issues.find((i) => i.id === id);
+          if (cur2) {
+            useStore.getState().upsertIssue({
+              ...cur2,
+              status: prevStatus,
+              updatedAt: Date.now(),
+            });
           }
-          const msg = "error" in r ? `改 status 失败: ${r.error}` : "改 status 失败";
+          const msg =
+            "error" in r ? `改 status 失败: ${r.error}` : "改 status 失败";
           useStore.getState().setNotice(msg);
         }
       })
       .catch((e) => {
-        const cur = useStore.getState().issues.find((i) => i.id === id);
-        if (cur) {
-          useStore.getState().upsertIssue({ ...cur, status: prevStatus, updatedAt: Date.now() });
+        const cur2 = useStore.getState().issues.find((i) => i.id === id);
+        if (cur2) {
+          useStore.getState().upsertIssue({
+            ...cur2,
+            status: prevStatus,
+            updatedAt: Date.now(),
+          });
         }
         useStore
           .getState()
@@ -51,10 +58,7 @@ export function KanbanPanel() {
       <div className="kanban">
         <header className="kanban-toolbar">
           <h2>看板</h2>
-          <button
-            className="btn btn-primary"
-            onClick={() => setCreating(true)}
-          >
+          <button className="btn btn-primary" onClick={() => setCreating(true)}>
             ＋ 新建 Issue
           </button>
         </header>
@@ -70,7 +74,7 @@ export function KanbanPanel() {
               }}
             >
               <header className="kanban-col-head">
-                <span className={`status-dot status-${s}`} aria-hidden />
+                <IssueStatusIcon status={s} />
                 <span className="kanban-col-title">{STATUS_LABEL[s]}</span>
                 <span className="tabular kanban-col-count">
                   {grouped[s].length}
@@ -89,7 +93,7 @@ export function KanbanPanel() {
                   </div>
                 ))}
                 {grouped[s].length === 0 && (
-                  <p className="kanban-col-empty">空</p>
+                  <p className="kanban-col-empty">暂无 issue</p>
                 )}
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore, exportMessages } from "../store";
 import type { SessionSnapshot } from "../../shared/types";
 
@@ -11,11 +11,23 @@ export function Composer({ session }: { session: SessionSnapshot }) {
   const resolvePersistedSession = useStore((s) => s.resolvePersistedSession);
   const [sendError, setSendError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const busy = session.status === "busy" || session.status === "compacting";
   const isExited = session.status === "exited";
 
-  // 保存消息（在 message_end 时调用的辅助函数）
+  // 切换会话时清掉本组件本地状态，避免 error/resume 残留闪到另一会话
+  useEffect(() => {
+    setSendError(null);
+    setResuming(false);
+    return () => {
+      if (persistTimer.current) {
+        clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+    };
+  }, [session.id]);
+
   const persistMessages = () => {
     const msgs = useStore.getState().messagesBySession[session.id];
     if (msgs && msgs.length > 0) {
@@ -28,7 +40,8 @@ export function Composer({ session }: { session: SessionSnapshot }) {
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || session.status === "exited") return;
+    // busy 时禁止静默 steer：UI 此时显示「中止」，Enter/发送不应改道
+    if (!text || session.status === "exited" || busy) return;
     setSendError(null);
     const pendingId = addUserMessage(session.id, text);
     setDraft(session.id, "");
@@ -49,9 +62,7 @@ export function Composer({ session }: { session: SessionSnapshot }) {
     try {
       const r = await window.sessionAPI.historyResume(session.id);
       if (r.ok) {
-        // 从历史列表中移除
         resolvePersistedSession(session.id);
-        // store 中 upsertSession 会由 onChange 事件处理
       } else {
         setSendError(r.error);
       }
@@ -69,19 +80,25 @@ export function Composer({ session }: { session: SessionSnapshot }) {
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (session.status !== "exited") send();
+      if (session.status !== "exited" && !busy) void send();
     }
   };
 
-  // 在 message_end 事件后自动保存消息（通过比较消息长度变化）
   useEffect(() => {
     const unsub = window.sessionAPI.onEvent(({ sessionId, event }) => {
       if (sessionId !== session.id) return;
       if (event.type === "message_end") {
-        setTimeout(persistMessages, 500);
+        if (persistTimer.current) clearTimeout(persistTimer.current);
+        persistTimer.current = setTimeout(persistMessages, 500);
       }
     });
-    return unsub;
+    return () => {
+      unsub();
+      if (persistTimer.current) {
+        clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+    };
   }, [session.id]);
 
   return (
@@ -89,7 +106,13 @@ export function Composer({ session }: { session: SessionSnapshot }) {
       <textarea
         className="composer-input"
         value={draft}
-        placeholder={isExited ? "会话已停止 · 点击「续对话」恢复" : "输入消息，Enter 发送，Shift+Enter 换行"}
+        placeholder={
+          isExited
+            ? "会话已停止 · 点击「续对话」恢复"
+            : busy
+              ? "Agent 运行中… 可点「中止」，或等结束后再发送"
+              : "输入消息，Enter 发送，Shift+Enter 换行"
+        }
         disabled={isExited}
         onChange={(e) => {
           setDraft(session.id, e.target.value);

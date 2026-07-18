@@ -20,6 +20,12 @@ export const IPC = {
   appGetHomeDir: "app:getHomeDir",
   appPathStat: "app:pathStat",
   appPickDirectory: "app:pickDirectory",
+  /** 在系统文件管理器中显示指定路径（文件夹或文件）。 */
+  appRevealInExplorer: "app:revealInExplorer",
+  /** 用系统默认应用打开指定路径（文件夹/文件）。 */
+  appOpenInExplorer: "app:openInExplorer",
+  appGetSettings: "app:getSettings",
+  appUpdateSettings: "app:updateSettings",
   // 持久化类
   sessionSaveMessages: "session:saveMessages",
   historyList: "history:list",
@@ -49,6 +55,10 @@ export const IPC = {
   issueDelete: "issue:delete",
   issueAssign: "issue:assign",
   issueStatus: "issue:status",
+  /** Multica 风格：手动重新派活（Assign 主路径之外）。 */
+  issueRerun: "issue:rerun",
+  taskList: "task:list",
+  taskListByIssue: "task:listByIssue",
   commentList: "comment:list",
   commentAdd: "comment:add",
   commentDelete: "comment:delete",
@@ -64,6 +74,30 @@ export const IPC = {
   issueDeleted: "issue:deleted",
   commentAdded: "comment:added",
   commentDeleted: "comment:deleted",
+  taskChanged: "task:changed",
+  // Squad
+  squadList: "squad:list",
+  squadGet: "squad:get",
+  squadCreate: "squad:create",
+  squadUpdate: "squad:update",
+  squadDelete: "squad:delete",
+  squadChanged: "squad:changed",
+  // Autopilot
+  autopilotList: "autopilot:list",
+  autopilotCreate: "autopilot:create",
+  autopilotUpdate: "autopilot:update",
+  autopilotDelete: "autopilot:delete",
+  autopilotRunNow: "autopilot:runNow",
+  autopilotRuns: "autopilot:runs",
+  autopilotChanged: "autopilot:changed",
+  // Inbox
+  inboxList: "inbox:list",
+  inboxMarkRead: "inbox:markRead",
+  inboxMarkAllRead: "inbox:markAllRead",
+  inboxClear: "inbox:clear",
+  inboxChanged: "inbox:changed",
+  // Skill zip
+  pluginImportSkillZip: "plugin:importSkillZip",
 } as const;
 
 /** 插件类型字面量：限定到 ~\/.pi/agent/ 下的三个白名单子目录。 */
@@ -106,7 +140,28 @@ export interface PluginChangedPayload {
 }
 
 /** 主面板类型：与左侧 IconRail 的导航项一一对应。 */
-export type PanelKind = "chat" | "agents" | "plugins" | "settings";
+export type PanelKind =
+  | "chat"
+  | "agents"
+  | "plugins"
+  | "settings"
+  | "squads"
+  | "autopilots"
+  | "inbox";
+
+/** 应用级设置（持久化于 {userData}/fromlan-pi-hub/settings.json）。 */
+export interface AppSettings {
+  defaultProvider: string;
+  defaultModel: string;
+  defaultCwd: string;
+  /** 派活后等待 running 的超时（默认 5 分钟）。 */
+  dispatchTimeoutMs: number;
+  /** running 状态最长执行时间（默认 2.5 小时）。 */
+  runningTimeoutMs: number;
+  /** 总尝试次数上限（含首次），默认 2。 */
+  maxRetries: number;
+  notifyMode: "background" | "always" | "off";
+}
 
 export type SessionStatus =
   | "starting"
@@ -251,8 +306,84 @@ export interface Comment {
   issueId: string;
   author: { kind: AssigneeKind; id: string; name: string };
   body: string;
-  /** 占位字段，阶段 1 不实现 mention picker，解析留给阶段 3。 */
+  /** 解析自 body 的 [@Name](mention://…) 引用。 */
   mentions: Array<{ kind: AssigneeKind; id: string }>;
+  createdAt: number;
+}
+
+/** Squad：leader 路由层，不增加能力。 */
+export interface SquadMember {
+  kind: "agent" | "human";
+  id: string;
+  role?: string;
+}
+
+export interface Squad {
+  id: string;
+  name: string;
+  description?: string;
+  leaderAgentName: string;
+  members: SquadMember[];
+  instructions: string;
+  archived: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SquadCreateInput {
+  name: string;
+  description?: string;
+  leaderAgentName: string;
+  members?: SquadMember[];
+  instructions?: string;
+}
+
+/** Autopilot 周期触发。 */
+export interface Autopilot {
+  id: string;
+  name: string;
+  agentName: string;
+  schedule: { cron: string; tz: string };
+  prompt: string;
+  mode: "create_issue" | "run_only";
+  priority: IssuePriority;
+  enabled: boolean;
+  lastRunAt?: number;
+  nextRunAt?: number;
+  createdAt: number;
+}
+
+export interface AutopilotCreateInput {
+  name: string;
+  agentName: string;
+  schedule: { cron: string; tz: string };
+  prompt: string;
+  mode: "create_issue" | "run_only";
+  priority?: IssuePriority;
+  enabled?: boolean;
+}
+
+export interface AutopilotRun {
+  id: string;
+  autopilotId: string;
+  firedAt: number;
+  status: "ok" | "failed" | "skipped";
+  issueId?: string;
+  sessionId?: string;
+  taskId?: string;
+  error?: string;
+}
+
+/** Inbox 仅给人看（agent 不进 inbox）。 */
+export type InboxKind = "mention" | "assign" | "task_failed" | "subscription";
+
+export interface InboxItem {
+  id: string;
+  kind: InboxKind;
+  issueId?: string;
+  title: string;
+  body: string;
+  read: boolean;
   createdAt: number;
 }
 
@@ -264,4 +395,66 @@ export interface IssueCreateInput {
   assignee?: Assignee;
   parent?: string;
   dueDate?: number;
+}
+
+// ── Task 子系统（对齐 Multica AgentTask 生命周期，本地薄切片） ──
+
+export type TaskStatus =
+  | "queued"
+  | "dispatched"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type TaskTrigger =
+  | "assign"
+  | "status"
+  | "rerun"
+  | "create"
+  | "mention"
+  | "cron"
+  | "squad_leader"
+  | "squad_member"
+  | "retry";
+
+export type TaskErrorReason =
+  | "timeout"
+  | "runtime_offline"
+  | "runtime_recovery"
+  | "agent_error"
+  | "unknown";
+
+export interface TaskErrorInfo {
+  reason: TaskErrorReason;
+  message: string;
+  retryable: boolean;
+}
+
+export interface Task {
+  id: string;
+  issueId: string;
+  sessionId?: string;
+  agentName: string;
+  attempt: number;
+  trigger: TaskTrigger;
+  status: TaskStatus;
+  provider: string;
+  model: string;
+  cwd?: string;
+  /** 人类可读错误摘要（展示用）。 */
+  error?: string;
+  errorInfo?: TaskErrorInfo;
+  parentTaskId?: string;
+  dispatchedAt?: number;
+  runningAt?: number;
+  createdAt: number;
+  finishedAt?: number;
+}
+
+/** issue:rerun 可选覆盖。 */
+export interface IssueRerunOpts {
+  provider?: string;
+  model?: string;
+  cwd?: string;
 }

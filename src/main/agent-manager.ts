@@ -19,6 +19,7 @@ import type {
  * 安全边界（与 plugin-manager 对齐）：
  * - 路径严格收敛到 ~/.pi/agents/<name>/<type>/ 白名单目录；
  * - 名称正则校验，挡掉 ../、/、空字符串；
+ * - 写入前若目标是符号链接，realpath 二次校验必须仍在白名单内；
  * - 软链接删除只 unlink 链接本身，不跟随删除目标。
  *
  * 元数据持久化：
@@ -88,8 +89,8 @@ function ensureSafePath(name: string, type: PluginType, resolved: string): void 
 }
 
 /**
- * 解析 symlink 后再次校验真实路径仍在白名单内。readFileSync 默认跟随 symlink，
- * 所以读取入口必须做这一步，防止白名单内 symlink 指向 ~/.ssh 等敏感位置被读出。
+ * 解析 symlink 后再次校验真实路径仍在白名单内。
+ * 读取与写入入口都必须做这一步。
  */
 function ensureSafeRealPath(name: string, type: PluginType, resolved: string): void {
   const base = typeDir(name, type) + sep;
@@ -97,6 +98,18 @@ function ensureSafeRealPath(name: string, type: PluginType, resolved: string): v
   if (!real.startsWith(base)) {
     throw new Error(`拒绝访问：符号链接目标超出白名单 (${base})`);
   }
+}
+
+/** 写入前：逻辑路径在白名单；若已存在则对真实路径再校验（含 symlink）。 */
+function ensureSafeWriteTarget(
+  name: string,
+  type: PluginType,
+  logicalPath: string,
+  writePath: string
+): void {
+  ensureSafePath(name, type, logicalPath);
+  if (!existsSync(writePath)) return;
+  ensureSafeRealPath(name, type, writePath);
 }
 
 function parseFrontmatter(body: string): {
@@ -321,14 +334,15 @@ export function saveFile(name: string, type: PluginType, item: string, body: str
   const iv = validateItemName(type, item);
   if (iv) throw new Error(iv);
   const abs = resolveItemPath(name, type, item);
-  ensureSafePath(name, type, abs);
 
   if (type === "skills") {
     if (!existsSync(abs)) throw new Error(`skill 目录不存在: ${abs}`);
     const skillPath = join(abs, "SKILL.md");
+    ensureSafeWriteTarget(name, type, abs, skillPath);
     writeFileSync(skillPath, body, "utf8");
   } else {
     if (!existsSync(typeDir(name, type))) mkdirSync(typeDir(name, type), { recursive: true });
+    ensureSafeWriteTarget(name, type, abs, abs);
     writeFileSync(abs, body, "utf8");
   }
 }

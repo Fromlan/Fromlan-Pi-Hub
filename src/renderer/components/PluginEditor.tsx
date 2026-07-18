@@ -107,6 +107,21 @@ export function PluginEditor({ type, target, onClose }: Props) {
           {isNew ? "新建" : "编辑"} {PLUGIN_TYPE_LABEL[type]}
         </h2>
 
+        {type === "skills" && !isNew && (
+          <div className="skill-standard-banner">
+            <strong>Agent Skills</strong>
+            {description && (
+              <p className="muted" style={{ margin: "4px 0 0" }}>
+                {description}
+              </p>
+            )}
+            <p className="muted" style={{ margin: "4px 0 0" }}>
+              标准文件名为 <code>SKILL.md</code>（Anthropic Agent Skills）。可用
+              Plugins 面板「导入 Zip」批量导入。
+            </p>
+          </div>
+        )}
+
         <label>
           名称
           <input

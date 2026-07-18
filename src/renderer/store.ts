@@ -11,7 +11,20 @@ import type {
   Issue,
   IssueStatus,
   Comment,
+  Task,
+  AppSettings,
+  Squad,
 } from "../shared/types";
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  defaultProvider: "",
+  defaultModel: "",
+  defaultCwd: "",
+  dispatchTimeoutMs: 5 * 60 * 1000,
+  runningTimeoutMs: 2.5 * 60 * 60 * 1000,
+  maxRetries: 2,
+  notifyMode: "background",
+};
 
 /** pi content 数组中段项（宽松结构：text / thinking / toolCall）。 */
 export interface ContentPart {
@@ -141,6 +154,9 @@ interface StoreState {
   issues: Issue[];
   activeIssueId: string | null;
   commentsByIssue: Record<string, Comment[]>;
+  /** Multica 派活 Task 列表（内存镜像）。 */
+  tasks: Task[];
+  appSettings: AppSettings;
 
   setIssues: (list: Issue[]) => void;
   upsertIssue: (i: Issue) => void;
@@ -149,6 +165,14 @@ interface StoreState {
   setCommentsForIssue: (issueId: string, list: Comment[]) => void;
   appendComment: (c: Comment) => void;
   removeCommentById: (commentId: string) => void;
+  setTasks: (list: Task[]) => void;
+  upsertTask: (t: Task) => void;
+  setAppSettings: (s: AppSettings) => void;
+
+  squads: Squad[];
+  setSquads: (list: Squad[]) => void;
+  upsertSquad: (s: Squad) => void;
+  removeSquad: (id: string) => void;
 }
 
 let msgSeq = 0;
@@ -161,10 +185,11 @@ function nextId(): string {
  *  保留首条（多为 system 上下文）+ 滚动窗口尾部 MAX_MESSAGES 条。 */
 const MAX_MESSAGES = 500;
 
-/** 取某会话消息数组的最后一条 assistant 流式消息。 */
+/** 取某会话消息数组的最后一条仍在流式中的 assistant（忽略已完成的轮次）。 */
 function lastStreamingAssistant(msgs: Msg[]): Msg | undefined {
   for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].role === "assistant") return msgs[i];
+    const m = msgs[i];
+    if (m.role === "assistant" && m.streaming === true) return m;
   }
   return undefined;
 }
@@ -186,8 +211,9 @@ export function exportMessages(msgs: Msg[]): MsgData[] {
           id: tc.id,
           name: tc.name,
           args: tc.args,
-          result: tc.result,
-          isError: tc.isError,
+          // 仍在跑的 tool 不落盘 result，避免冻结半截输出
+          result: tc.running ? undefined : tc.result,
+          isError: tc.running ? undefined : tc.isError,
         }));
       }
       return out;
@@ -295,6 +321,7 @@ export const useStore = create<StoreState>((set, get) => ({
       activePanel: "chat",
       activePersistedId: null,
       activeId: id,
+      ...(id != null ? { viewMode: "session" as const } : {}),
     }),
 
   setPersistedSession: (id) =>
@@ -303,6 +330,7 @@ export const useStore = create<StoreState>((set, get) => ({
       activePanel: "chat",
       activeSessionId: null,
       activeId: id,
+      ...(id != null ? { viewMode: "session" as const } : {}),
     }),
 
   setActive: (id) => {
@@ -545,9 +573,17 @@ export const useStore = create<StoreState>((set, get) => ({
           const derived = deriveAssistantFields(content);
           const targetIdx = msgs.lastIndexOf(target);
           const previousCalls = target.toolCalls ?? [];
+          // 保留 prev 的 streamingOutput/result/running；新 streamed 的 name/args 优先生效
           const mergedCalls = derived.toolCalls.map((c) => {
             const prev = previousCalls.find((p) => p.id === c.id);
-            return prev ? { ...c, ...prev, running: prev.running } : c;
+            if (!prev) return c;
+            return {
+              ...prev,
+              ...c,
+              streamingOutput: prev.streamingOutput,
+              result: prev.result ?? c.result,
+              running: prev.running,
+            };
           });
           msgs[targetIdx] = {
             ...target,
@@ -747,6 +783,7 @@ export const useStore = create<StoreState>((set, get) => ({
   resolvePersistedSession: (id) =>
     set((s) => ({
       persistedSessions: s.persistedSessions.filter((p) => p.id !== id),
+      activePersistedId: s.activePersistedId === id ? null : s.activePersistedId,
     })),
 
   setPlugins: (type, list) =>
@@ -819,6 +856,8 @@ export const useStore = create<StoreState>((set, get) => ({
   issues: [],
   activeIssueId: null,
   commentsByIssue: {},
+  tasks: [],
+  appSettings: { ...DEFAULT_APP_SETTINGS },
 
   setIssues: (list) =>
     set((s) => {
@@ -854,9 +893,10 @@ export const useStore = create<StoreState>((set, get) => ({
   setActiveIssue: (id) =>
     set((s) => ({
       activeIssueId: id,
-      viewMode: "list",
+      // null = 返回看板；非 null = 打开详情
+      viewMode: id == null ? "kanban" : "list",
       activePanel: "chat",
-      activeId: `__issue__`,
+      activeId: id == null ? `__kanban__` : `__issue__`,
     })),
 
   setCommentsForIssue: (issueId, list) =>
@@ -883,6 +923,34 @@ export const useStore = create<StoreState>((set, get) => ({
       }
       return { commentsByIssue: next };
     }),
+
+  setTasks: (list) => set({ tasks: list }),
+
+  upsertTask: (t) =>
+    set((s) => {
+      const idx = s.tasks.findIndex((x) => x.id === t.id);
+      const tasks =
+        idx === -1
+          ? [...s.tasks, t]
+          : s.tasks.map((x) => (x.id === t.id ? t : x));
+      return { tasks };
+    }),
+
+  setAppSettings: (appSettings) => set({ appSettings }),
+
+  squads: [],
+  setSquads: (list) => set({ squads: list }),
+  upsertSquad: (sq) =>
+    set((s) => {
+      const idx = s.squads.findIndex((x) => x.id === sq.id);
+      const squads =
+        idx === -1
+          ? [...s.squads, sq]
+          : s.squads.map((x) => (x.id === sq.id ? sq : x));
+      return { squads };
+    }),
+  removeSquad: (id) =>
+    set((s) => ({ squads: s.squads.filter((x) => x.id !== id) })),
 }));
 
 // ── 派生 getters（阶段 1） ────────────────────────────────────────
@@ -906,6 +974,17 @@ export const ISSUE_STATUSES: IssueStatus[] = [
   "blocked",
   "cancelled",
 ];
+
+/** 某 issue 是否有 active task（queued/dispatched/running）。 */
+export function issueHasActiveTask(tasks: Task[], issueId: string): boolean {
+  return tasks.some(
+    (t) =>
+      t.issueId === issueId &&
+      (t.status === "queued" ||
+        t.status === "dispatched" ||
+        t.status === "running")
+  );
+}
 
 /** 状态中文标签 */
 export const STATUS_LABEL: Record<IssueStatus, string> = {

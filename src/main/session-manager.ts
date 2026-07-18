@@ -48,6 +48,12 @@ interface ManagedSession {
   /** 阶段 1：从哪个 issue 派生；undefined = 自由会话。 */
   issueId?: string;
   client: PiRpcClient;
+  /** 本轮是否进入过 busy（用于判断 agent_end 是否算完成）。 */
+  sawBusy: boolean;
+  /** 最近一条 assistant 文本，供 Issue 回写摘要。 */
+  lastAssistantText: string;
+  /** 最近一条 thinking（无 text 时回退用）。 */
+  lastAssistantThinking: string;
 }
 
 /**
@@ -56,6 +62,8 @@ interface ManagedSession {
  * 事件：
  * - "spawned"(snapshot) / "killed"(id) / "change"(snapshot)
  * - "event"({ sessionId, event })  转发底层 pi 事件流
+ * - "issue-session-completed"({ sessionId, summary })  绑定 issue 的 agent 正常结束
+ * - "issue-session-failed"({ sessionId, error })      绑定 issue 的会话失败/关闭
  */
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, ManagedSession>();
@@ -85,32 +93,12 @@ export class SessionManager extends EventEmitter {
       agentName: opts.agentName,
       issueId: opts.issueId,
       client,
+      sawBusy: false,
+      lastAssistantText: "",
+      lastAssistantThinking: "",
     };
     this.sessions.set(id, session);
-
-    client.on("event", (event: PiEvent) => this.handleEvent(id, event));
-    client.on("error", (err) => {
-      // EventEmitter 在无 error 监听时会抛未捕获异常把主进程带崩，
-      // 这里兜底打印；同时记录到状态机以让 UI 能感知。
-      console.error(`[pi-rpc ${id}] error:`, err);
-      if (this.sessions.has(id)) {
-        session.status = "exited";
-        this.emit("change", this.toSnapshot(session));
-      }
-    });
-    client.on("exit", () => {
-      session.status = "exited";
-      this.emit("change", this.toSnapshot(session));
-      // 进程意外退出时自动持久化；kill() 已从 sessions 中 delete 了条目，不会重复
-      if (this.sessions.has(id) && session.messageCount > 0) {
-        this.sessions.delete(id);
-        const snap = this.toSnapshot(session);
-        snap.status = "exited";
-        this._persistedSessions.push(snap);
-        persistence.saveSessions(this._persistedSessions);
-        this.emit("killed", id);
-      }
-    });
+    this.wireClient(id, session);
 
     try {
       const state = await client.send<{
@@ -122,8 +110,10 @@ export class SessionManager extends EventEmitter {
       session.messageCount = state?.messageCount ?? 0;
       session.pendingMessageCount = state?.pendingMessageCount ?? 0;
       session.status = "idle";
-    } catch {
-      session.status = "exited";
+    } catch (e) {
+      // get_state 失败：关掉子进程并从 map 移除，向上抛错让 IPC 返回 ok:false
+      await this.failStart(id, session);
+      throw e instanceof Error ? e : new Error(String(e));
     }
 
     const snap = this.toSnapshot(session);
@@ -170,6 +160,13 @@ export class SessionManager extends EventEmitter {
   async kill(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
+    // 先通知 runner（再删 map），避免 exit 回调跳过失败回写
+    if (session.issueId) {
+      this.emit("issue-session-failed", {
+        sessionId: id,
+        error: "会话被关闭",
+      });
+    }
     // 先删除（这样 exit 回调看到 !this.sessions.has(id) 就不会重复持久化）
     this.sessions.delete(id);
     await session.client.close();
@@ -227,32 +224,12 @@ export class SessionManager extends EventEmitter {
       agentName: old.agentName,
       issueId: old.issueId,
       client,
+      sawBusy: false,
+      lastAssistantText: "",
+      lastAssistantThinking: "",
     };
     this.sessions.set(id, session);
-
-    client.on("event", (event: PiEvent) => this.handleEvent(id, event));
-    client.on("error", (err) => {
-      // EventEmitter 在无 error 监听时会抛未捕获异常把主进程带崩，
-      // 这里兜底打印；同时记录到状态机以让 UI 能感知。
-      console.error(`[pi-rpc ${id}] error:`, err);
-      if (this.sessions.has(id)) {
-        session.status = "exited";
-        this.emit("change", this.toSnapshot(session));
-      }
-    });
-    client.on("exit", () => {
-      session.status = "exited";
-      this.emit("change", this.toSnapshot(session));
-      // 进程意外退出时自动持久化；kill() 已从 sessions 中 delete 了条目，不会重复
-      if (this.sessions.has(id) && session.messageCount > 0) {
-        this.sessions.delete(id);
-        const snap = this.toSnapshot(session);
-        snap.status = "exited";
-        this._persistedSessions.push(snap);
-        persistence.saveSessions(this._persistedSessions);
-        this.emit("killed", id);
-      }
-    });
+    this.wireClient(id, session);
 
     try {
       const state = await client.send<{
@@ -264,8 +241,12 @@ export class SessionManager extends EventEmitter {
       session.messageCount = state?.messageCount ?? old.messageCount;
       session.pendingMessageCount = state?.pendingMessageCount ?? 0;
       session.status = "idle";
-    } catch {
-      session.status = "exited";
+    } catch (e) {
+      await this.failStart(id, session);
+      // resume 失败：把元数据放回历史，避免会话丢失
+      this._persistedSessions.push({ ...this.toSnapshot(session), status: "exited" });
+      persistence.saveSessions(this._persistedSessions);
+      throw e instanceof Error ? e : new Error(String(e));
     }
 
     const snap = this.toSnapshot(session);
@@ -374,6 +355,50 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
+  /** 订阅 client 事件；exit 时无论有无消息都从 map 移除（有消息则持久化）。 */
+  private wireClient(id: string, session: ManagedSession): void {
+    session.client.on("event", (event: PiEvent) => this.handleEvent(id, event));
+    session.client.on("error", (err) => {
+      // EventEmitter 在无 error 监听时会抛未捕获异常把主进程带崩
+      console.error(`[pi-rpc ${id}] error:`, err);
+      if (this.sessions.has(id)) {
+        session.status = "exited";
+        this.emit("change", this.toSnapshot(session));
+      }
+    });
+    session.client.on("exit", () => {
+      session.status = "exited";
+      this.emit("change", this.toSnapshot(session));
+      // kill() 已从 sessions 中 delete，不会重复；零消息也要清掉，避免僵尸条目
+      if (!this.sessions.has(id)) return;
+      if (session.issueId) {
+        this.emit("issue-session-failed", {
+          sessionId: id,
+          error: "pi 进程意外退出",
+        });
+      }
+      this.sessions.delete(id);
+      if (session.messageCount > 0) {
+        const snap = this.toSnapshot(session);
+        snap.status = "exited";
+        this._persistedSessions.push(snap);
+        persistence.saveSessions(this._persistedSessions);
+      }
+      this.emit("killed", id);
+    });
+  }
+
+  /** get_state 失败：标记 exited、关子进程、从 map 删除。 */
+  private async failStart(id: string, session: ManagedSession): Promise<void> {
+    session.status = "exited";
+    this.sessions.delete(id);
+    try {
+      await session.client.close();
+    } catch {
+      // ignore
+    }
+  }
+
   private handleEvent(id: string, event: PiEvent): void {
     const session = this.sessions.get(id);
     if (!session) return;
@@ -381,10 +406,28 @@ export class SessionManager extends EventEmitter {
       case "agent_start":
       case "turn_start":
         session.status = "busy";
+        session.sawBusy = true;
         break;
       case "agent_settled":
+        // settled = 暂时空闲（可能还在等下一轮）；不结束 Issue Task
+        session.status = "idle";
+        break;
       case "agent_end":
+        session.status = "idle";
+        // 仅 agent_end 视为整次派活结束（避免 mid-run settled 导致空摘要 + 会话仍在跑）
+        if (session.issueId && session.sawBusy) {
+          const summary =
+            session.lastAssistantText.trim() ||
+            session.lastAssistantThinking.trim();
+          this.emit("issue-session-completed", {
+            sessionId: id,
+            summary,
+          });
+          session.sawBusy = false;
+        }
+        break;
       case "turn_end":
+        // 多 turn 循环中途：只标 idle，不完成 task
         session.status = "idle";
         break;
       case "compaction_start":
@@ -393,12 +436,18 @@ export class SessionManager extends EventEmitter {
       case "compaction_end":
         session.status = "idle";
         break;
+      case "message_update":
       case "message_end": {
-        // 只统计 assistant 消息，与 pi 内部 messageCount 语义一致。
-        // (user 消息走 get_state 初始化 / message_start 时已计入)
-        const msg = event.message as { role?: string } | undefined;
+        const msg = event.message as
+          | { role?: string; content?: unknown; text?: string; thinking?: string }
+          | undefined;
         if (msg?.role === "assistant") {
-          session.messageCount = (session.messageCount ?? 0) + 1;
+          const extracted = extractAssistantFields(msg);
+          if (extracted.text) session.lastAssistantText = extracted.text;
+          if (extracted.thinking) session.lastAssistantThinking = extracted.thinking;
+          if (event.type === "message_end") {
+            session.messageCount = (session.messageCount ?? 0) + 1;
+          }
         }
         break;
       }
@@ -426,4 +475,30 @@ export class SessionManager extends EventEmitter {
       issueId: s.issueId,
     };
   }
+}
+
+/** 从 pi message 负载提取 assistant 文本与 thinking。 */
+function extractAssistantFields(msg: {
+  content?: unknown;
+  text?: string;
+  thinking?: string;
+}): { text: string; thinking: string } {
+  let text = typeof msg.text === "string" ? msg.text.trim() : "";
+  let thinking = typeof msg.thinking === "string" ? msg.thinking.trim() : "";
+  if (!Array.isArray(msg.content)) return { text, thinking };
+  const textParts: string[] = [];
+  const thinkParts: string[] = [];
+  for (const p of msg.content) {
+    if (!p || typeof p !== "object") continue;
+    const part = p as { type?: string; text?: string; thinking?: string };
+    if (part.type === "text" && typeof part.text === "string") {
+      textParts.push(part.text);
+    }
+    if (part.type === "thinking" && typeof part.thinking === "string") {
+      thinkParts.push(part.thinking);
+    }
+  }
+  if (textParts.length) text = textParts.join("").trim();
+  if (thinkParts.length) thinking = thinkParts.join("\n").trim();
+  return { text, thinking };
 }

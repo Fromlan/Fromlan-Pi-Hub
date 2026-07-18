@@ -81,7 +81,7 @@ export function createIssue(input: IssueCreateInput): Issue {
     key: `FPH-${env.nextKeySeq++}`,
     title: input.title,
     description: input.description,
-    status: input.status ?? "backlog",
+    status: input.status ?? "todo",
     priority: input.priority ?? "medium",
     assignee: input.assignee ?? { kind: "human", id: "default" },
     parent: input.parent,
