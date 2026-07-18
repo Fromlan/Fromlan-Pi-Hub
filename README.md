@@ -132,6 +132,23 @@ npm run dist      # 打便携 .exe → release/
 npm run typecheck # 全量类型检查
 ```
 
+### 发版（GitHub Release）
+
+日常 push 不会打包。先改 [`package.json`](package.json) 的 `version`，再打同名 tag 并推送，Actions 会自动构建 Windows 便携版、生成 Release Notes、上传 `.exe`：
+
+```bash
+# 1. 将 package.json 的 version 改为例如 0.9.1 并 commit
+git add package.json
+git commit -m "chore: bump version to 0.9.1"
+
+# 2. 打同名 tag 并推送（tag 必须与 package.json 一致，否则 CI 失败）
+git tag v0.9.1
+git push origin HEAD
+git push origin v0.9.1
+```
+
+完成后在 GitHub Releases 页查看产物与更新说明。
+
 ---
 
 ## 技术栈
@@ -302,6 +319,23 @@ npm run dev       # dev mode with HMR + DevTools
 npm run dist      # portable .exe → release/
 npm run typecheck # full type check
 ```
+
+### Releasing (GitHub Release)
+
+Ordinary pushes do not build. Bump `version` in [`package.json`](package.json), commit, then push a matching tag. Actions builds the Windows portable exe, generates release notes, and uploads the artifact:
+
+```bash
+# 1. Set package.json version (e.g. 0.9.1) and commit
+git add package.json
+git commit -m "chore: bump version to 0.9.1"
+
+# 2. Tag and push (tag must match package.json or CI fails)
+git tag v0.9.1
+git push origin HEAD
+git push origin v0.9.1
+```
+
+Then check the GitHub Releases page for the exe and changelog.
 
 ---
 
