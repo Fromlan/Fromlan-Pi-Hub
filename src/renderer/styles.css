@@ -692,8 +692,23 @@ body {
   color: var(--text-on-tinted);
 }
 
-.bubble-user .plaintext {
-  white-space: pre-wrap;
+.bubble-user .markdown {
+  color: var(--text-bubble-user);
+}
+
+.bubble-user .markdown a {
+  color: var(--text-bubble-user);
+  text-decoration: underline;
+}
+
+.bubble-user .markdown :not(pre) > code {
+  background: color-mix(in oklch, var(--text-bubble-user) 18%, transparent);
+  color: var(--text-bubble-user);
+}
+
+.bubble-user .markdown-mention {
+  background: color-mix(in oklch, var(--text-bubble-user) 22%, transparent);
+  color: var(--text-bubble-user);
 }
 
 .bubble-text {
@@ -759,6 +774,46 @@ body {
 
 .markdown a {
   color: var(--accent-blue);
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: 0.85em 0 0.4em;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.markdown h1 { font-size: 1.35em; }
+.markdown h2 { font-size: 1.2em; }
+.markdown h3 { font-size: 1.08em; }
+
+.markdown p,
+.markdown ul,
+.markdown ol {
+  margin: 0.45em 0;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 1.35em;
+}
+
+.markdown hr {
+  border: none;
+  border-top: 0.5px solid var(--border-primary);
+  margin: 0.9em 0;
+}
+
+.markdown-mention {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklch, var(--accent-blue) 16%, transparent);
+  color: var(--accent-blue);
+  font-weight: 550;
+  white-space: nowrap;
 }
 
 /* ── 思考 / 工具卡 ── */
@@ -1855,6 +1910,78 @@ textarea.form-input {
   margin-top: 8px;
 }
 
+/* ── Pi Hub Helper 欢迎弹窗 ── */
+.helper-welcome-overlay {
+  z-index: 120;
+}
+
+.helper-welcome-modal {
+  width: min(520px, 92vw);
+}
+
+.helper-welcome-eyebrow {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.helper-welcome-lede {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.helper-welcome-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.helper-welcome-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 0.5px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.helper-welcome-card:hover:not(:disabled) {
+  border-color: var(--accent-blue);
+  background: var(--bg-list-hover);
+}
+
+.helper-welcome-card:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.helper-welcome-card-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.helper-welcome-card-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.helper-welcome-foot {
+  justify-content: flex-start;
+}
+
 /* ════════════════════════════════════════════════════════════════════════
    阶段 1：Kanban 看板
    ════════════════════════════════════════════════════════════════════════ */
@@ -2413,6 +2540,35 @@ textarea.form-input {
   resize: vertical;
 }
 
+.issue-description-preview {
+  min-height: 120px;
+  margin-bottom: 28px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 0.5px solid transparent;
+  cursor: text;
+  text-align: left;
+  color: var(--text-primary);
+  line-height: 1.55;
+}
+
+.issue-description-preview:hover,
+.issue-description-preview:focus-visible {
+  background: var(--bg-input);
+  border-color: var(--border-primary);
+  outline: none;
+}
+
+.issue-description-empty {
+  display: flex;
+  align-items: flex-start;
+}
+
+.issue-description-empty .muted {
+  margin: 0;
+  text-align: left;
+}
+
 .issue-detail-activity {
   display: flex;
   flex-direction: column;
@@ -2583,7 +2739,6 @@ textarea.form-input {
   font-size: 13px;
   line-height: 1.55;
   color: color-mix(in oklch, var(--text-primary) 90%, transparent);
-  white-space: pre-wrap;
 }
 
 .comment-compose {
@@ -2642,24 +2797,25 @@ textarea.form-input {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   v0.5：TaskHistory
+   v0.5：TaskHistory（卡片列表，避免宽表横滚）
    ════════════════════════════════════════════════════════════════════════ */
 
 .task-history {
   border-top: 0.5px solid var(--border-primary);
   padding: 12px 22px 16px;
-  max-height: 220px;
-  min-height: 120px;
+  max-height: 280px;
+  min-height: 100px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  gap: 8px;
 }
 
 .task-history-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .task-history-head h3 {
@@ -2669,80 +2825,205 @@ textarea.form-input {
   color: var(--text-primary);
 }
 
-.task-history-table-wrap {
-  flex: 1;
+.task-history-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 0.5px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 1px 7px;
+  min-width: 1.5em;
+  text-align: center;
+}
+
+.task-history-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.task-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   overflow: auto;
   min-height: 0;
+  flex: 1;
 }
 
-.task-history-table {
-  width: 100%;
-  border-collapse: collapse;
+.task-history-item {
+  border: 0.5px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  padding: 8px 10px;
+}
+
+.task-history-item.status-running {
+  border-color: color-mix(in oklch, var(--accent-blue) 45%, var(--border-primary));
+}
+
+.task-history-item.status-failed {
+  border-color: color-mix(in oklch, var(--accent-red) 40%, var(--border-primary));
+}
+
+.task-history-item.status-completed {
+  border-color: color-mix(in oklch, var(--accent-green) 35%, var(--border-primary));
+}
+
+.task-history-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.task-history-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.task-history-attempt {
   font-size: 11px;
-}
-
-.task-history-table th,
-.task-history-table td {
-  padding: 4px 8px;
-  text-align: left;
-  border-bottom: 0.5px solid var(--border-primary);
-  vertical-align: top;
-}
-
-.task-history-table th {
   font-weight: 600;
   color: var(--text-muted);
-  position: sticky;
-  top: 0;
-  background: var(--bg-primary);
+  flex-shrink: 0;
 }
 
-.task-time {
+.task-history-agent {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  min-width: 0;
+  max-width: 160px;
+}
+
+.task-history-trigger {
+  font-size: 11px;
   color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-main);
+  border: 0.5px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+.task-history-retry {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.task-history-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.task-history-tl-step {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.task-history-tl-sep {
+  display: inline-block;
+  width: 10px;
+  height: 0.5px;
+  margin: 0 6px;
+  background: var(--border-input);
+  align-self: center;
+}
+
+.task-history-tl-label {
+  color: var(--text-dim);
+}
+
+.task-history-tl-time {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.task-history-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+  border-top: 0.5px solid var(--border-primary);
+}
+
+.task-history-error-msg {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-error);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .task-status-badge {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
   border: 0.5px solid var(--border-primary);
+  color: var(--text-secondary);
+  background: var(--bg-main);
+  flex-shrink: 0;
+}
+
+.task-status-badge.status-queued,
+.task-status-badge.status-dispatched {
+  color: var(--accent-yellow);
+  border-color: color-mix(in oklch, var(--accent-yellow) 50%, var(--border-primary));
 }
 
 .task-status-badge.status-running {
   color: var(--accent-blue);
-  border-color: var(--accent-blue);
+  border-color: color-mix(in oklch, var(--accent-blue) 50%, var(--border-primary));
 }
 
 .task-status-badge.status-failed {
   color: var(--accent-red);
-  border-color: var(--accent-red);
+  border-color: color-mix(in oklch, var(--accent-red) 50%, var(--border-primary));
 }
 
 .task-status-badge.status-completed {
   color: var(--accent-green);
-  border-color: var(--accent-green);
+  border-color: color-mix(in oklch, var(--accent-green) 50%, var(--border-primary));
 }
 
-.task-error-cell {
-  max-width: 200px;
-}
-
-.task-error-msg {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.task-status-badge.status-cancelled {
+  color: var(--text-muted);
 }
 
 .task-retryable-badge {
   display: inline-block;
-  margin-top: 2px;
-  padding: 0 4px;
-  font-size: 9px;
-  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 10px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
 }
 
 .task-retryable-badge.retryable {
@@ -3005,6 +3286,12 @@ textarea.form-input {
   gap: 10px;
   align-items: baseline;
   margin-bottom: 4px;
+}
+
+.inbox-item-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 
 .inbox-kind {

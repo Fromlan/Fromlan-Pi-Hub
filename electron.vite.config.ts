@@ -43,7 +43,10 @@ export default defineConfig({
       },
     },
     server: {
+      // Windows 上 Vite 默认可能只绑 ::1，Electron 却连 127.0.0.1 → ERR_CONNECTION_REFUSED
+      host: "127.0.0.1",
       port: 5173,
+      strictPort: true,
     },
   },
 });

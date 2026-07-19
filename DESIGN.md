@@ -270,12 +270,13 @@ hover / focus / active 高亮**不另设 token**，用 `oklch(from var(--x) l c 
 
 灵感来自 [Multica](https://github.com/multica-ai/multica) 看板与详情，**视觉语言**对齐；已引入 **Project** 分组（Issue 多对一 + 进度汇总），仍不做 Labels。
 
-#### IssueCard（四行）
+#### IssueCard（主结构）
 
 ```
 .issue-card
 ├── .issue-card-row1     PriorityIcon + .issue-key | .issue-card-working
 ├── .issue-card-title    13px / 500 / line-clamp-2（主视觉）
+├── .issue-card-project  可选，11px muted（所属项目名）
 ├── .issue-card-desc     可选，11.5px muted，单行省略
 └── .issue-card-row4     ActorAvatar + 名 | due / 相对时间 + MessageSquare 计数
 ```
@@ -284,6 +285,7 @@ hover / focus / active 高亮**不另设 token**，用 `oklch(from var(--x) l c 
 - 优先级：仅 `PriorityIcon`（4 格竖条 SVG）；Key 为 muted mono
 - **禁止**彩色文字优先级徽章、**禁止** emoji（评论计数用 lucide `MessageSquare`）
 - 活跃 Task：右上角 `.issue-card-working`（「Working」脉冲 chip）
+- 项目名不得压过标题层级（小字 muted，非徽章堆砌）
 
 #### Kanban 列
 

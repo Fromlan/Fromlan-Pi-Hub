@@ -14,6 +14,7 @@ import { SquadsPanel } from "./components/SquadsPanel";
 import { AutopilotsPanel } from "./components/AutopilotsPanel";
 import { InboxPanel } from "./components/InboxPanel";
 import { ProjectsPanel } from "./components/ProjectsPanel";
+import { HelperWelcomeModal } from "./components/HelperWelcomeModal";
 
 export function App() {
   const sessions = useStore((s) => s.sessions);
@@ -22,7 +23,9 @@ export function App() {
   const activePersistedId = useStore((s) => s.activePersistedId);
   const persistedSessions = useStore((s) => s.persistedSessions);
   const viewMode = useStore((s) => s.viewMode);
+  const appSettings = useStore((s) => s.appSettings);
   const [showNew, setShowNew] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
 
   const active =
     activePanel === "chat" && viewMode === "session" && activeSessionId
@@ -39,7 +42,10 @@ export function App() {
     window.sessionAPI.historyList().then((list) => store.setPersistedSessions(list));
     window.issueAPI.list().then((list) => useStore.getState().setIssues(list));
     window.issueAPI.taskList().then((list) => useStore.getState().setTasks(list));
-    window.appAPI.getSettings().then((s) => useStore.getState().setAppSettings(s));
+    window.appAPI.getSettings().then((s) => {
+      useStore.getState().setAppSettings(s);
+      setSettingsReady(true);
+    });
     window.agentAPI.list().then((list) => useStore.getState().setAgents(list));
     window.squadAPI.list().then((list) => useStore.getState().setSquads(list));
     window.projectAPI.list().then((list) => useStore.getState().setProjects(list));
@@ -147,6 +153,7 @@ export function App() {
       <IconRail />
       {mainPanel}
       {showNew && <NewSessionDialog onClose={() => setShowNew(false)} />}
+      {settingsReady && !appSettings.onboardedAt && <HelperWelcomeModal />}
     </div>
   );
 }

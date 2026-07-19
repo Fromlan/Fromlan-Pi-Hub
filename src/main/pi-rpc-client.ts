@@ -166,6 +166,11 @@ export class PiRpcClient extends EventEmitter {
       pushDir("prompts", "--prompt-template", (n) => n.endsWith(".md"));
       pushDir("skills", "--skill", () => true);
       pushDir("extensions", "--extension", (n) => n.endsWith(".ts"));
+      // 对齐 Multica Agent Identity：agent 根目录 IDENTITY.md → 追加到系统提示
+      const identityPath = join(root, "IDENTITY.md");
+      if (existsSync(identityPath)) {
+        args.push("--append-system-prompt", identityPath);
+      }
     }
 
     // env 严格白名单：不再透传父进程 env（避免把 shell 中的 *_API_KEY 注入子进程）。

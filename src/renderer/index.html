@@ -52,6 +52,7 @@
           getSettings: () => Promise.resolve({
             defaultProvider: '', defaultModel: '', defaultCwd: '',
             dispatchTimeoutMs: 300000, runningTimeoutMs: 9000000, maxRetries: 2, notifyMode: 'background',
+            onboardedAt: Date.now(),
           }),
           updateSettings: (s) => Promise.resolve({ ok: true, settings: s }),
         };

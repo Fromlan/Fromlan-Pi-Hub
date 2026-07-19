@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Fromlan Pi Hub 是一个 Electron 桌面客户端，**不内置 pi，也不管理 API 密钥**。它通过图形界面启动多个独立的 `pi --mode rpc` 子进程（每个会话一个），通过 JSONL 协议通信。
 
-产品定位：**Windows 上的 Multica 本地单机版** —— Kanban 派活、Task 可靠性、Squad 路由、Autopilot、Inbox；聊天为执行日志。只服务 pi，纯本地，无云。
+产品定位：**Windows 上的 Multica 本地单机版** —— Kanban 派活、Project 分组、Task 可靠性、Squad 路由、Autopilot、Inbox；聊天为执行日志。只服务 pi，纯本地，无云。
 
 前置依赖：全局安装 `pi`（≥ 0.80.6）且至少配置一个 provider（写入 `~/.pi/agent/auth.json`）。
 
@@ -108,13 +108,13 @@ src/
 │   ├── agents-store.ts        # agent 元数据
 │   └── persistence.ts         # session 历史 + getBaseDir()
 ├── preload/index.ts           # sessionAPI / appAPI / pluginAPI / agentAPI /
-│                              # issueAPI / squadAPI / autopilotAPI / inboxAPI
+│                              # issueAPI / projectAPI / squadAPI / autopilotAPI / inboxAPI
 └── renderer/
     ├── App.tsx                # 按 activePanel + viewMode 路由
-    ├── store.ts               # zustand：sessions / issues / tasks / squads / …
+    ├── store.ts               # zustand：sessions / issues / tasks / projects / squads / …
     ├── styles.css             # 设计系统 tokens（OKLCH）
     └── components/
-        ├── IconRail.tsx       # 看板 / Agents / Squads / Plugins / Autopilots / Inbox / 设置
+        ├── IconRail.tsx       # 看板 / Projects / Agents / Squads / Plugins / Autopilots / Inbox / 设置
         ├── KanbanPanel.tsx / IssueCard.tsx / IssueDetail.tsx
         ├── PriorityIcon.tsx / IssueStatusIcon.tsx / ActorAvatar.tsx
         ├── TaskHistory.tsx / MentionPicker.tsx
@@ -152,9 +152,17 @@ pi 的 `abort` 命令不发 response，所以 `SessionManager.abort` 用 `sendFi
 - 改超时/重试走 `settings-store`，勿硬编码魔法数到 monitor。
 
 ### Mention / Squad
-- 评论 body 用 `uniqueMentions` 解析；`handleCommentMentions` 给 agent 起 Task、给人写 Inbox。
-- Leader Protocol 硬编码在 `buildSquadLeaderPrompt`（不可用户编辑）；仅 `instructions` 可配。
-- 反自触发：leader 自身 mention 忽略；评论已含显式 agent mention 时可跳过再启 leader。
+- 评论 body 用 `uniqueMentions` 解析；`handleCommentTriggers` = mention 路由 +（Issue 已派给 Squad 时）Leader 再唤醒。
+- Leader Protocol 硬编码在 `buildSquadLeaderPrompt`（不可用户编辑）；仅 `instructions` / 成员 `role` 可配。
+- 反自触发：Leader 自身评论不唤醒；显式 `@agent/@squad/@human` 时让路（agent 回帖 `@` 他人除外，仍唤醒 Leader 协调）。
+- Leader 输出无有效 mention → `pickFirstSquadMember` 兜底；仍无成员则回滚 `todo` + Inbox。
+- 归档 Squad（UI「归档」）：软删 + 已派 Issue 转给 `leaderAgentName`；拒绝再派给已归档小队。
+
+### Project
+- Issue `projectId` 至多一个；删项目只 unlink，不删 Issue。
+- 进度：`done / (linked − cancelled)`（`backlog` 计分母不计分子）。
+- 有 `defaultCwd` 时，`resolveModel` 在未显式传 cwd 下优先用项目目录；Squad Leader briefing 用已解析的 `task.cwd` 重建。
+- 不做：github_repo Resource、侧栏个人钉选、Labels、多 Workspace 权限。
 
 ### Inbox 原则
 **Agent 不进 Inbox。** Inbox 只给人（本机用户）看：mention / assign / task_failed 等。
@@ -171,7 +179,7 @@ preload 暴露的方法名沿用 channel 名：`pluginAPI.delete` / `agentAPI.de
 ### 设计系统规范
 所有颜色/圆角/阴影走 `src/renderer/styles.css` 的 CSS 变量（OKLCH）。新增颜色时**不要**写死 oklch() 值，一律加 token。详见 `DESIGN.md`（按钮六型、消息气泡六类、阴影三级、动画规范、**§8.6 Issue/Kanban Multica 层级**）。
 
-Issue UI 约定：卡片四行（PriorityIcon+Key → 标题 → 描述 → meta）；列宽 280px + `IssueStatusIcon`；详情 = 文档主栏 + 右侧 Properties；评论 Avatar gutter；禁止 emoji 与文字优先级徽章堆砌。
+Issue UI 约定：卡片主结构为 PriorityIcon+Key → 标题 →（可选项目名小字）→ 描述 → meta；列宽 280px + `IssueStatusIcon`；详情 = 文档主栏 + 右侧 Properties；评论 Avatar gutter；禁止 emoji 与文字优先级徽章堆砌。
 
 ### 主面板 + chat 内视图（IconRail / Sidebar）
 `activePanel`：
@@ -208,4 +216,4 @@ Issue UI 约定：卡片四行（PriorityIcon+Key → 标题 → 描述 → meta
 **禁止在 React render 体内调 `useStore.getState()`** —— 该调用不订阅变化，列表/计数不会响应 store 更新。改用 `useStore(selector)` 或 `useStore(useShallow(...))`。在事件回调 / useEffect 闭包内调 getState() 是合法的（典型场景：App.tsx 一次性初始化 IPC 订阅）。
 
 ### 借鉴 Multica / 不借鉴
-详见 [ROADMAP.md](./ROADMAP.md)。全量借鉴任务模型、超时重试、四触发、Squad、Skill、Inbox 给人；**不做** Server–Daemon–Cloud、多 CLI、多 Workspace。
+详见 [ROADMAP.md](./ROADMAP.md)。全量借鉴任务模型、超时重试、四触发、Squad、Project 分组、Skill、Inbox 给人；**不做** Server–Daemon–Cloud、多 CLI、多 Workspace、github_repo Resource。

@@ -26,6 +26,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   runningTimeoutMs: 2.5 * 60 * 60 * 1000,
   maxRetries: 2,
   notifyMode: "background",
+  onboardedAt: undefined,
 };
 
 /** pi content 数组中段项（宽松结构：text / thinking / toolCall）。 */

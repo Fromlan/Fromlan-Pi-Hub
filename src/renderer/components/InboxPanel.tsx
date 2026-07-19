@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useStore } from "../store";
 import { INBOX_KIND_LABEL, PANEL_LABEL } from "../../shared/labels";
 import type { InboxItem } from "../../shared/types";
+import { MarkdownBody } from "./MarkdownBody";
 
 export function InboxPanel() {
   const setActiveIssue = useStore((s) => s.setActiveIssue);
@@ -76,7 +77,7 @@ export function InboxPanel() {
                 <strong>{item.title}</strong>
                 <time>{new Date(item.createdAt).toLocaleString()}</time>
               </header>
-              <p>{item.body}</p>
+              <MarkdownBody className="inbox-item-body">{item.body}</MarkdownBody>
             </button>
           </li>
         ))}

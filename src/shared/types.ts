@@ -169,6 +169,11 @@ export interface AppSettings {
   /** 总尝试次数上限（含首次），默认 2。 */
   maxRetries: number;
   notifyMode: "background" | "always" | "off";
+  /**
+   * Pi Hub Helper 欢迎弹窗完成时间（选卡或跳过）。
+   * undefined = 尚未完成，应显示引导弹窗。
+   */
+  onboardedAt?: number;
 }
 
 export type SessionStatus =

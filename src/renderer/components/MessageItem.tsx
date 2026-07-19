@@ -1,9 +1,7 @@
 import { useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import { Loader2, XCircle, Wrench, Brain, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import type { Msg, ToolCallView, ContentPart } from "../store";
+import { MarkdownBody } from "./MarkdownBody";
 
 /** 把 args 对象压缩成可读单行（隐藏过长的字符串）。 */
 function summarizeArgs(args: unknown): string {
@@ -190,14 +188,7 @@ function renderContent(content: ContentPart[], toolCalls: ToolCallView[] | undef
         const t = textBuf;
         els.push(
           <div key={`text-flush-${i}`} className="bubble bubble-text">
-            <div className="markdown">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-              >
-                {t}
-              </ReactMarkdown>
-            </div>
+            <MarkdownBody>{t}</MarkdownBody>
           </div>
         );
         textBuf = "";
@@ -211,14 +202,7 @@ function renderContent(content: ContentPart[], toolCalls: ToolCallView[] | undef
         const t = textBuf;
         els.push(
           <div key={`text-flush-${i}`} className="bubble bubble-text">
-            <div className="markdown">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-              >
-                {t}
-              </ReactMarkdown>
-            </div>
+            <MarkdownBody>{t}</MarkdownBody>
           </div>
         );
         textBuf = "";
@@ -241,14 +225,7 @@ function renderContent(content: ContentPart[], toolCalls: ToolCallView[] | undef
   if (textBuf) {
     els.push(
       <div key="t-tail" className="bubble bubble-text">
-        <div className="markdown">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
-          >
-            {textBuf}
-          </ReactMarkdown>
-        </div>
+        <MarkdownBody>{textBuf}</MarkdownBody>
       </div>
     );
   }
@@ -267,7 +244,7 @@ export function MessageItem({ msg }: { msg: Msg }) {
     return (
       <div className={`bubble bubble-user${msg.pending ? " bubble-pending" : ""}`}>
         <div className="bubble-role">你</div>
-        <div className="plaintext">{msg.text}</div>
+        <MarkdownBody>{msg.text}</MarkdownBody>
       </div>
     );
   }
@@ -300,14 +277,7 @@ export function MessageItem({ msg }: { msg: Msg }) {
         ))}
         <div className="bubble bubble-text">
           <div className="bubble-role">Pi</div>
-          <div className="markdown">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
-            >
-              {msg.text || (msg.streaming ? "▍" : "")}
-            </ReactMarkdown>
-          </div>
+          <MarkdownBody>{msg.text || (msg.streaming ? "▍" : "")}</MarkdownBody>
           {msg.streaming && msg.text && <span className="cursor">▍</span>}
         </div>
       </>

@@ -13,6 +13,7 @@ import * as projectStore from "./project-store";
 import * as autopilotStore from "./autopilot-store";
 import * as autopilotManager from "./autopilot-manager";
 import * as inboxStore from "./inbox-store";
+import { ensurePiHubHelper } from "./guide-agent";
 import { uniqueMentions } from "../shared/mention";
 import { startTaskMonitor, stopTaskMonitor } from "./task-monitor";
 import {
@@ -71,13 +72,58 @@ function createWindow(): void {
   });
 
   if (!app.isPackaged) {
-    // 开发模式：优先用 ELECTRON_RENDERER_URL（electron-vite 提供），否则兜底 http://localhost:5173。
+    // 开发模式：优先用 ELECTRON_RENDERER_URL（electron-vite 提供），否则兜底 IPv4。
     // 两种情况都开 DevTools，便于手动调试。
-    const url = process.env.ELECTRON_RENDERER_URL ?? "http://localhost:5173";
-    mainWindow.loadURL(url);
+    const url =
+      process.env.ELECTRON_RENDERER_URL ?? "http://127.0.0.1:5173/";
+    void loadDevUrlWithRetry(mainWindow, url);
     mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  }
+}
+
+/** 等 Vite renderer 就绪；避免抢连或 IPv4/IPv6 短暂拒绝。 */
+async function loadDevUrlWithRetry(
+  win: BrowserWindow,
+  url: string,
+  attempts = 20,
+  delayMs = 250
+): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    if (win.isDestroyed()) return;
+    const ok = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (success: boolean) => {
+        if (settled || win.isDestroyed()) return;
+        settled = true;
+        win.webContents.removeListener("did-finish-load", onFinish);
+        win.webContents.removeListener("did-fail-load", onFail);
+        resolve(success);
+      };
+      const onFinish = () => finish(true);
+      const onFail = (
+        _e: Electron.Event,
+        _code: number,
+        _desc: string,
+        failedUrl: string
+      ) => {
+        if (
+          failedUrl.startsWith("http://127.0.0.1") ||
+          failedUrl.startsWith("http://localhost")
+        ) {
+          finish(false);
+        }
+      };
+      win.webContents.once("did-finish-load", onFinish);
+      win.webContents.once("did-fail-load", onFail);
+      void win.loadURL(url).catch(() => finish(false));
+    });
+    if (ok) return;
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  if (!win.isDestroyed()) {
+    console.error(`[dev] failed to load renderer after retries: ${url}`);
   }
 }
 
@@ -704,6 +750,11 @@ ipcMain.handle(IPC.pluginImportSkillZip, async () => {
 // ── App 生命周期 ──
 app.whenReady().then(() => {
   sessionManager.loadPersisted();
+  try {
+    ensurePiHubHelper();
+  } catch (e) {
+    console.error("[main] ensurePiHubHelper failed:", e);
+  }
   createWindow();
   startTaskMonitor({
     getSessions: () => sessionManager.list(),

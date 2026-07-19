@@ -9,7 +9,22 @@ import type { Task } from "../../shared/types";
 
 function fmtTime(ts?: number): string {
   if (!ts) return "—";
-  return new Date(ts).toLocaleString();
+  const d = new Date(ts);
+  const mm = String(d.getMonth() + 1);
+  const dd = String(d.getDate());
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${mm}/${dd} ${hh}:${mi}:${ss}`;
+}
+
+function timelineParts(t: Task): { label: string; ts?: number }[] {
+  return [
+    { label: "创建", ts: t.createdAt },
+    { label: "派活", ts: t.dispatchedAt },
+    { label: "运行", ts: t.runningAt },
+    { label: "结束", ts: t.finishedAt },
+  ];
 }
 
 interface Props {
@@ -46,82 +61,76 @@ export function TaskHistory({ issueId }: Props) {
     <section className="task-history">
       <header className="task-history-head">
         <h3>Task 历史</h3>
-        <span className="tabular">{rows.length}</span>
+        <span className="task-history-count tabular">{rows.length}</span>
       </header>
       {rows.length === 0 ? (
-        <p className="muted">还没有派活记录</p>
+        <p className="task-history-empty">还没有派活记录</p>
       ) : (
-        <div className="task-history-table-wrap">
-          <table className="task-history-table">
-            <thead>
-              <tr>
-                <th>次数</th>
-                <th>状态</th>
-                <th>Agent</th>
-                <th>触发</th>
-                <th>创建</th>
-                <th>派活</th>
-                <th>运行</th>
-                <th>结束</th>
-                <th>错误</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((t) => (
-                <tr key={t.id} className={`task-row task-status-${t.status}`}>
-                  <td className="tabular">{t.attempt}</td>
-                  <td>
+        <ul className="task-history-list">
+          {rows.map((t) => {
+            const canRetry = t.status === "failed" || t.status === "cancelled";
+            const parts = timelineParts(t).filter((p) => p.ts);
+            return (
+              <li key={t.id} className={`task-history-item status-${t.status}`}>
+                <div className="task-history-item-main">
+                  <div className="task-history-item-top">
+                    <span className="task-history-attempt tabular">#{t.attempt}</span>
                     <span className={`task-status-badge status-${t.status}`}>
                       {TASK_STATUS_LABEL[t.status]}
                     </span>
-                  </td>
-                  <td>{t.agentName}</td>
-                  <td>{TASK_TRIGGER_LABEL[t.trigger] ?? t.trigger}</td>
-                  <td className="tabular task-time">{fmtTime(t.createdAt)}</td>
-                  <td className="tabular task-time">{fmtTime(t.dispatchedAt)}</td>
-                  <td className="tabular task-time">{fmtTime(t.runningAt)}</td>
-                  <td className="tabular task-time">{fmtTime(t.finishedAt)}</td>
-                  <td className="task-error-cell">
-                    {t.error ? (
-                      <>
-                        <span className="task-error-msg" title={t.error}>
-                          {t.errorInfo
-                            ? TASK_REASON_LABEL[t.errorInfo.reason] ??
-                              t.errorInfo.reason
-                            : "错误"}
-                          ：{t.error.slice(0, 48)}
-                          {t.error.length > 48 ? "…" : ""}
-                        </span>
-                        {t.errorInfo?.retryable != null && (
-                          <span
-                            className={`task-retryable-badge${t.errorInfo.retryable ? " retryable" : " not-retryable"}`}
-                          >
-                            {t.errorInfo.retryable ? "可重试" : "不可重试"}
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td>
-                    {(t.status === "failed" || t.status === "cancelled") && (
+                    <span className="task-history-agent" title={t.agentName}>
+                      {t.agentName}
+                    </span>
+                    <span className="task-history-trigger">
+                      {TASK_TRIGGER_LABEL[t.trigger] ?? t.trigger}
+                    </span>
+                    {canRetry && (
                       <button
-                        className="btn btn-sm"
+                        type="button"
+                        className="btn btn-sm task-history-retry"
                         disabled={rerunningId === t.id}
                         onClick={() => retryRow(t)}
                         title="重新派活此 issue"
                       >
-                        {rerunningId === t.id ? "…" : "重试此行"}
+                        {rerunningId === t.id ? "…" : "重试"}
                       </button>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                  {parts.length > 0 && (
+                    <ol className="task-history-timeline">
+                      {parts.map((p, i) => (
+                        <li key={p.label} className="task-history-tl-step">
+                          {i > 0 && <span className="task-history-tl-sep" aria-hidden />}
+                          <span className="task-history-tl-label">{p.label}</span>
+                          <time className="task-history-tl-time tabular" dateTime={new Date(p.ts!).toISOString()}>
+                            {fmtTime(p.ts)}
+                          </time>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                  {t.error && (
+                    <div className="task-history-error">
+                      <span className="task-history-error-msg" title={t.error}>
+                        {t.errorInfo
+                          ? TASK_REASON_LABEL[t.errorInfo.reason] ?? t.errorInfo.reason
+                          : "错误"}
+                        ：{t.error}
+                      </span>
+                      {t.errorInfo?.retryable != null && (
+                        <span
+                          className={`task-retryable-badge${t.errorInfo.retryable ? " retryable" : " not-retryable"}`}
+                        >
+                          {t.errorInfo.retryable ? "可重试" : "不可重试"}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </section>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useStore,
   ISSUE_STATUSES,
@@ -15,6 +15,7 @@ import { ProjectPicker } from "./ProjectPicker";
 import { NewSessionDialog } from "./NewSessionDialog";
 import { TaskHistory } from "./TaskHistory";
 import { MentionPicker } from "./MentionPicker";
+import { MarkdownBody } from "./MarkdownBody";
 import { uniqueMentions } from "../../shared/mention";
 import type { Issue, IssueStatus, IssuePriority } from "../../shared/types";
 
@@ -42,6 +43,8 @@ export function IssueDetail() {
   const [showMention, setShowMention] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [rerunning, setRerunning] = useState(false);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const descRef = useRef<HTMLTextAreaElement>(null);
 
   const busy = id ? issueHasActiveTask(tasks, id) : false;
   const canRerun =
@@ -57,6 +60,14 @@ export function IssueDetail() {
       }
     });
   }, [id, setCommentsForIssue]);
+
+  useEffect(() => {
+    setEditingDesc(false);
+  }, [id]);
+
+  useEffect(() => {
+    if (editingDesc) descRef.current?.focus();
+  }, [editingDesc]);
 
   if (!issue) {
     return (
@@ -162,13 +173,42 @@ export function IssueDetail() {
             onChange={(e) => update({ title: e.target.value })}
             placeholder="Issue 标题"
           />
-          <textarea
-            className="form-input issue-description-hero"
-            rows={6}
-            placeholder="添加描述…"
-            value={issue.description ?? ""}
-            onChange={(e) => update({ description: e.target.value })}
-          />
+          {editingDesc ? (
+            <textarea
+              ref={descRef}
+              className="form-input issue-description-hero"
+              rows={6}
+              placeholder="添加描述…"
+              value={issue.description ?? ""}
+              onChange={(e) => update({ description: e.target.value })}
+              onBlur={() => setEditingDesc(false)}
+            />
+          ) : (
+            <div
+              className={`issue-description-preview${
+                issue.description?.trim() ? "" : " issue-description-empty"
+              }`}
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("a")) return;
+                setEditingDesc(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setEditingDesc(true);
+                }
+              }}
+              aria-label="编辑描述"
+            >
+              {issue.description?.trim() ? (
+                <MarkdownBody>{issue.description}</MarkdownBody>
+              ) : (
+                <span className="muted">添加描述…</span>
+              )}
+            </div>
+          )}
 
           <section className="issue-detail-activity">
             <header className="issue-detail-comments-head">
@@ -203,7 +243,7 @@ export function IssueDetail() {
                       ✕
                     </button>
                   </header>
-                  <p className="comment-body">{c.body}</p>
+                  <MarkdownBody className="comment-body">{c.body}</MarkdownBody>
                 </article>
               ))}
               {comments.length === 0 && (
