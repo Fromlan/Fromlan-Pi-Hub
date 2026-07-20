@@ -78,6 +78,7 @@ export const INBOX_KIND_LABEL: Record<InboxKind, string> = {
   assign: "指派",
   task_failed: "任务失败",
   subscription: "订阅",
+  skill_proposed: "Skill 提炼",
 };
 
 /** Task 状态 */
@@ -108,6 +109,7 @@ export const TASK_REASON_LABEL: Record<TaskErrorReason, string> = {
   timeout: "超时",
   runtime_offline: "离线",
   runtime_recovery: "恢复",
+  session_poisoned: "会话毒化",
   agent_error: "Agent 错误",
   unknown: "未知",
 };

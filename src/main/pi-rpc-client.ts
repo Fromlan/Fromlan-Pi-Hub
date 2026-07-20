@@ -29,6 +29,8 @@ export interface PiRpcClientOptions {
    * 留空则沿用 pi 默认行为（加载全局 + 当前 cwd 下的项目级）。
    */
   agentName?: string;
+  /** 额外 `--extension` 绝对路径（如 Hub Issue 工具），在 agent 隔离注入之后追加。 */
+  extraExtensions?: string[];
 }
 
 interface ResolvedPi {
@@ -173,10 +175,20 @@ export class PiRpcClient extends EventEmitter {
       }
     }
 
+    // Hub 等额外 extension（在 agent 隔离之后仍可注入）
+    if (this.opts.extraExtensions?.length) {
+      for (const ext of this.opts.extraExtensions) {
+        if (ext && existsSync(ext)) {
+          args.push("--extension", ext);
+        }
+      }
+    }
+
     // env 严格白名单：不再透传父进程 env（避免把 shell 中的 *_API_KEY 注入子进程）。
     // API key 由 pi 自身的 AuthStorage 从 ~/.pi/agent/auth.json 读取，优先级高于 env。
     // 仅补充无副作用的系统级变量（PATH/TEMP/HOME/LANG/TZ 等）+ opts.env 显式追加项 +
     // 强制 NO_COLOR/FORCE_COLOR。额外剔除任何形如 *API_KEY*/*SECRET*/*TOKEN* 的项兜底。
+    // Hub 桥使用 FROMLAN_HUB_BRIDGE_KEY（避免 *TOKEN* 被剔除）。
     const baseEnv: Record<string, string> = {
       PATH: process.env.PATH ?? "",
       PATHEXT: process.env.PATHEXT ?? "",
@@ -213,6 +225,9 @@ export class PiRpcClient extends EventEmitter {
       assertShellSafe(this.opts.cwd, "cwd");
       assertShellSafe(this.opts.sessionId, "sessionId");
       assertShellSafe(this.opts.agentName, "agentName");
+      for (const ext of this.opts.extraExtensions ?? []) {
+        assertShellSafe(ext, "extraExtension");
+      }
       for (let i = 0; i < args.length; i++) {
         // 跳过纯 flag（以 -- 开头且无空格的）
         if (args[i].startsWith("--") && !args[i].includes("=")) continue;

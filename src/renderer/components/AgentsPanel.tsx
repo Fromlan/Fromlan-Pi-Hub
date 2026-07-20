@@ -1,30 +1,50 @@
 import { useEffect, useState } from "react";
+import { Plus } from "lucide-react";
 import { useStore } from "../store";
 import type { PluginType, PluginItemMeta, AgentMeta } from "../../shared/types";
 import { PANEL_LABEL } from "../../shared/labels";
 import { AgentFileEditor } from "./AgentFileEditor";
+import { AgentIdentityEditor } from "./AgentIdentityEditor";
 import { formatBytes } from "../../shared/utils";
 
-/** 三栏 tabs 的元信息；路径前缀改为 agent 私有目录。 */
-const TYPES: { type: PluginType; label: string; hint: (name: string) => string }[] = [
+type AgentTab = "identity" | PluginType;
+
+/** 身份 + 三栏插件 tabs；路径前缀为 agent 私有目录。 */
+const TABS: {
+  id: AgentTab;
+  label: string;
+  hint: (name: string) => string;
+}[] = [
   {
-    type: "prompts",
+    id: "identity",
+    label: "身份",
+    hint: (n) => `~/.pi/agents/${n}/IDENTITY.md → --append-system-prompt`,
+  },
+  {
+    id: "prompts",
     label: "Prompt 模板",
     hint: (n) => `~/.pi/agents/${n}/prompts/*.md → /<name>`,
   },
   {
-    type: "skills",
+    id: "skills",
     label: "Skill",
     hint: (n) => `~/.pi/agents/${n}/skills/<name>/SKILL.md → /skill:<name>`,
   },
   {
-    type: "extensions",
+    id: "extensions",
     label: "Extension",
     hint: (n) => `~/.pi/agents/${n}/extensions/*.ts（启动时挂载）`,
   },
 ];
 
 const AGENT_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
+
+function emptyStateForTab(tab: AgentTab, label: string): string {
+  if (tab === "prompts") {
+    return "还没有 Prompt 模板（会话内 /name）。系统提示词请到「身份」页签编辑。";
+  }
+  return `还没有 ${label}。点击右上角"新建"开始。`;
+}
 
 export function AgentsPanel() {
   const agents = useStore((s) => s.agents);
@@ -33,18 +53,26 @@ export function AgentsPanel() {
   const removeAgent = useStore((s) => s.removeAgent);
 
   const [activeAgentName, setActiveAgentName] = useState<string | null>(null);
-  const [activeType, setActiveType] = useState<PluginType>("prompts");
+  const [activeTab, setActiveTab] = useState<AgentTab>("identity");
   const [files, setFiles] = useState<PluginItemMeta[]>([]);
   const [editing, setEditing] = useState<PluginItemMeta | "new" | null>(null);
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [newIdentity, setNewIdentity] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [confirmDeleteAgent, setConfirmDeleteAgent] = useState(false);
+
+  const [descDraft, setDescDraft] = useState("");
+  const [descBusy, setDescBusy] = useState(false);
+  const [descError, setDescError] = useState<string | null>(null);
+
+  const activeType: PluginType | null =
+    activeTab === "identity" ? null : activeTab;
 
   // 首帧拉取 agent 列表，并默认选中第一个
   useEffect(() => {
@@ -68,10 +96,14 @@ export function AgentsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 订阅 agent 变更：增删 agent 时同步列表与选中态；文件级改动时按需刷新
+  // 订阅 agent 变更：增删 / 元数据更新时同步列表；文件级改动时按需刷新
   useEffect(() => {
     return window.agentAPI.onChanged(async (p) => {
-      if (p.action === "created" || p.action === "deleted") {
+      if (
+        p.action === "created" ||
+        p.action === "deleted" ||
+        p.action === "updated"
+      ) {
         const list = await window.agentAPI.list();
         setAgents(list);
         if (p.action === "deleted" && activeAgentName === p.name) {
@@ -81,7 +113,12 @@ export function AgentsPanel() {
         return;
       }
       // 文件级事件：刷新当前 agent 当前类型列表
-      if (activeAgentName && p.name === activeAgentName && p.type === activeType) {
+      if (
+        activeAgentName &&
+        p.name === activeAgentName &&
+        activeType &&
+        p.type === activeType
+      ) {
         try {
           const items = await window.agentAPI.fileList(activeAgentName, activeType);
           setFiles(items);
@@ -92,9 +129,9 @@ export function AgentsPanel() {
     });
   }, [activeAgentName, activeType, setAgents]);
 
-  // 切换 agent 或类型时重新拉文件列表
+  // 切换 agent 或插件类型时重新拉文件列表
   useEffect(() => {
-    if (!activeAgentName) {
+    if (!activeAgentName || !activeType) {
       setFiles([]);
       return;
     }
@@ -113,8 +150,15 @@ export function AgentsPanel() {
     };
   }, [activeAgentName, activeType]);
 
+  // 切换选中 agent 时同步 description 草稿
+  useEffect(() => {
+    const a = agents.find((x) => x.name === activeAgentName);
+    setDescDraft(a?.description ?? "");
+    setDescError(null);
+  }, [activeAgentName, agents]);
+
   const refresh = async () => {
-    if (!activeAgentName) return;
+    if (!activeAgentName || !activeType) return;
     try {
       const items = await window.agentAPI.fileList(activeAgentName, activeType);
       setFiles(items);
@@ -136,7 +180,12 @@ export function AgentsPanel() {
     }
     setBusy(true);
     try {
-      const r = await window.agentAPI.create(trimmed, newDesc.trim() || undefined);
+      const identity = newIdentity.trim() || undefined;
+      const r = await window.agentAPI.create(
+        trimmed,
+        newDesc.trim() || undefined,
+        identity
+      );
       if (!r.ok) {
         setCreateError(r.error);
         return;
@@ -144,13 +193,36 @@ export function AgentsPanel() {
       const meta: AgentMeta = r.meta;
       upsertAgent(meta);
       setActiveAgentName(meta.name);
+      setActiveTab("identity");
       setCreating(false);
       setNewName("");
       setNewDesc("");
+      setNewIdentity("");
     } catch (e) {
       setCreateError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveDescription = async () => {
+    if (!activeAgentName) return;
+    const current = agents.find((a) => a.name === activeAgentName);
+    const next = descDraft.trim();
+    const prev = (current?.description ?? "").trim();
+    if (next === prev) return;
+    setDescBusy(true);
+    setDescError(null);
+    try {
+      const r = await window.agentAPI.update(activeAgentName, {
+        description: next,
+      });
+      if (!r.ok) throw new Error(r.error);
+      upsertAgent(r.meta);
+    } catch (e) {
+      setDescError((e as Error).message);
+    } finally {
+      setDescBusy(false);
     }
   };
 
@@ -171,8 +243,10 @@ export function AgentsPanel() {
     }
   };
 
-  const activeMeta = TYPES.find((t) => t.type === activeType)!;
+  const activeMeta = TABS.find((t) => t.id === activeTab)!;
   const activeAgent = agents.find((a) => a.name === activeAgentName) ?? null;
+  const descDirty =
+    descDraft.trim() !== (activeAgent?.description ?? "").trim();
 
   return (
     <div className="agents-panel">
@@ -186,8 +260,9 @@ export function AgentsPanel() {
               setCreateError(null);
             }}
             title="新建代理"
+            aria-label="新建代理"
           >
-            ＋
+            <Plus size={16} strokeWidth={2} aria-hidden />
           </button>
         </div>
         <div className="agents-sidebar-list">
@@ -200,7 +275,11 @@ export function AgentsPanel() {
               <button
                 key={a.name}
                 className={`agents-sidebar-item ${a.name === activeAgentName ? "agents-sidebar-item-active" : ""}`}
-                onClick={() => setActiveAgentName(a.name)}
+                onClick={() => {
+                  setActiveAgentName(a.name);
+                  setActiveTab("identity");
+                  setEditing(null);
+                }}
                 title={a.description ?? a.name}
               >
                 <span className="agents-sidebar-item-name">{a.name}</span>
@@ -220,14 +299,46 @@ export function AgentsPanel() {
           </div>
         ) : (
           <>
+            <div className="agents-meta">
+              <div className="agents-meta-top">
+                <h2 className="agents-meta-name">{activeAgent.name}</h2>
+              </div>
+              <label className="agents-meta-desc">
+                <span className="form-label">描述</span>
+                <div className="agents-meta-desc-row">
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={descDraft}
+                    onChange={(e) => setDescDraft(e.target.value)}
+                    placeholder="简短说明这个 agent 的用途"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        saveDescription();
+                      }
+                    }}
+                  />
+                  <button
+                    className={`btn ${descDirty ? "btn-primary" : "btn-ghost"}`}
+                    onClick={saveDescription}
+                    disabled={descBusy || !descDirty}
+                  >
+                    {descBusy ? "…" : "保存"}
+                  </button>
+                </div>
+              </label>
+              {descError && <div className="plugins-error">{descError}</div>}
+            </div>
+
             <header className="plugins-header">
               <div className="plugins-tabs">
-                {TYPES.map((t) => (
+                {TABS.map((t) => (
                   <button
-                    key={t.type}
-                    className={`plugins-tab ${activeType === t.type ? "plugins-tab-active" : ""}`}
+                    key={t.id}
+                    className={`plugins-tab ${activeTab === t.id ? "plugins-tab-active" : ""}`}
                     onClick={() => {
-                      setActiveType(t.type);
+                      setActiveTab(t.id);
                       setEditing(null);
                     }}
                   >
@@ -236,16 +347,25 @@ export function AgentsPanel() {
                 ))}
               </div>
               <div className="plugins-header-right">
-                <button className="btn" onClick={refresh} title="重新读取目录">
-                  刷新
-                </button>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => setEditing("new")}
-                  disabled={!activeAgent}
-                >
-                  ＋ 新建
-                </button>
+                {activeTab !== "identity" && (
+                  <>
+                    <button
+                      className="btn btn-ghost"
+                      onClick={refresh}
+                      title="重新读取目录"
+                    >
+                      刷新
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => setEditing("new")}
+                      disabled={!activeAgent}
+                    >
+                      <Plus size={14} strokeWidth={2} aria-hidden />
+                      新建
+                    </button>
+                  </>
+                )}
               </div>
             </header>
 
@@ -253,44 +373,59 @@ export function AgentsPanel() {
 
             {fileError && <div className="plugins-error">{fileError}</div>}
 
-            <div className="plugin-list">
-              {files.length === 0 ? (
-                <div className="plugin-list-empty">
-                  还没有 {activeMeta.label}。点击右上角"新建"开始。
-                </div>
-              ) : (
-                files.map((item) => (
-                  <button
-                    key={`${activeType}:${item.name}`}
-                    className="plugin-item"
-                    onClick={() => setEditing(item)}
-                    title={item.relPath}
-                  >
-                    <div className="plugin-item-main">
-                      <span className="plugin-item-name">
-                        {item.isSymlink && <span className="plugin-item-symlink">↪</span>} {item.name}
-                      </span>
-                      {item.frontmatter?.description && (
-                        <span className="plugin-item-desc">{item.frontmatter.description}</span>
-                      )}
-                    </div>
-                    <div className="plugin-item-meta">
-                      {formatBytes(item.size)} · {new Date(item.mtime).toLocaleString()}
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
+            {activeTab === "identity" ? (
+              <AgentIdentityEditor
+                key={activeAgent.name}
+                agentName={activeAgent.name}
+              />
+            ) : (
+              <div className="plugin-list">
+                {files.length === 0 ? (
+                  <div className="plugin-list-empty">
+                    {emptyStateForTab(activeTab, activeMeta.label)}
+                  </div>
+                ) : (
+                  files.map((item) => (
+                    <button
+                      key={`${activeTab}:${item.name}`}
+                      className="plugin-item"
+                      onClick={() => setEditing(item)}
+                      title={item.relPath}
+                    >
+                      <div className="plugin-item-main">
+                        <span className="plugin-item-name">
+                          {item.isSymlink && (
+                            <span className="plugin-item-symlink">↪</span>
+                          )}{" "}
+                          {item.name}
+                        </span>
+                        {item.frontmatter?.description && (
+                          <span className="plugin-item-desc">
+                            {item.frontmatter.description}
+                          </span>
+                        )}
+                      </div>
+                      <div className="plugin-item-meta">
+                        {formatBytes(item.size)} ·{" "}
+                        {new Date(item.mtime).toLocaleString()}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
 
             <footer className="agents-footer">
               {confirmDeleteAgent ? (
                 <div className="plugin-editor-confirm" style={{ width: "100%" }}>
                   <span>
-                    确认删除 agent <code>{activeAgent.name}</code>？目录下所有 prompts / skills / extensions 一并删除，且不可撤销。
+                    确认删除 agent <code>{activeAgent.name}</code>？目录下
+                    IDENTITY.md 与所有 prompts / skills / extensions
+                    一并删除，且不可撤销。
                   </span>
                   <div className="dialog-actions">
                     <button
-                      className="btn"
+                      className="btn btn-secondary"
                       onClick={() => setConfirmDeleteAgent(false)}
                       disabled={busy}
                     >
@@ -320,11 +455,12 @@ export function AgentsPanel() {
 
         {creating && (
           <div className="dialog-overlay" onClick={() => !busy && setCreating(false)}>
-            <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog agents-create-dialog" onClick={(e) => e.stopPropagation()}>
               <h2>新建代理</h2>
               <p className="dialog-hint">
-                agent 拥有独立的 prompts/skills/extensions，启动会话时选择该 agent
-                将完全看不到全局 ~/.pi/agent/ 下的内容。
+                agent 拥有独立的身份（IDENTITY.md）与 prompts / skills /
+                extensions；启动会话时选择该 agent 将完全看不到全局{" "}
+                <code>~/.pi/agent/</code> 下的内容。
               </p>
               <label>
                 名称
@@ -350,9 +486,24 @@ export function AgentsPanel() {
                   placeholder="例如：负责 React 组件的代码生成"
                 />
               </label>
+              <label>
+                初始身份 / 系统提示（可选）
+                <textarea
+                  className="form-input"
+                  value={newIdentity}
+                  onChange={(e) => setNewIdentity(e.target.value)}
+                  rows={8}
+                  placeholder="写入 IDENTITY.md；留空则稍后在「身份」页签编辑"
+                  spellCheck={false}
+                />
+              </label>
               {createError && <p className="dialog-error">{createError}</p>}
               <div className="dialog-actions">
-                <button className="btn" onClick={() => setCreating(false)} disabled={busy}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setCreating(false)}
+                  disabled={busy}
+                >
                   取消
                 </button>
                 <button
@@ -367,7 +518,7 @@ export function AgentsPanel() {
           </div>
         )}
 
-        {editing && activeAgent && (
+        {editing && activeAgent && activeType && (
           <AgentFileEditor
             agentName={activeAgent.name}
             type={activeType}

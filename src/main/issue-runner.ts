@@ -7,6 +7,13 @@ import * as projectStore from "./project-store";
 import * as inboxStore from "./inbox-store";
 import { notifyInboxItem } from "./notification";
 import { formatMention, uniqueMentions } from "../shared/mention";
+import { maybeExtractAndWriteSkill } from "./skill-extract";
+import {
+  decideResume,
+  degradeAfterResumeFailure,
+  isSessionPoisonMessage,
+  sessionPoisonErrorInfo,
+} from "./resume-policy";
 import { homedir } from "os";
 import type {
   Comment,
@@ -97,6 +104,9 @@ function emitComment(c: Comment): void {
 
 /** 根据错误消息分类（Multica 风格）。 */
 export function classifyError(message: string): TaskErrorInfo {
+  if (isSessionPoisonMessage(message) || /session_poisoned/i.test(message)) {
+    return sessionPoisonErrorInfo(message);
+  }
   const lower = message.toLowerCase();
   if (
     lower.includes("timeout") ||
@@ -109,10 +119,13 @@ export function classifyError(message: string): TaskErrorInfo {
     lower.includes("offline") ||
     lower.includes("not found") ||
     lower.includes("exited") ||
-    lower.includes("session") ||
     lower.includes("离线") ||
     lower.includes("不存在")
   ) {
+    return { reason: "runtime_offline", message, retryable: true };
+  }
+  // 泛化 "session" 曾误伤毒化；仅在非毒化路径下视作 offline
+  if (lower.includes("session") && !lower.includes("poison")) {
     return { reason: "runtime_offline", message, retryable: true };
   }
   if (lower.includes("recovery") || lower.includes("recover")) {
@@ -213,7 +226,16 @@ export function buildIssuePrompt(
     "## 要求",
     "请直接执行本 Issue 描述的任务。",
     "完成后必须用自然语言给出简洁结果摘要（给人类看，将写回 Issue 评论区）——不要只留下 thinking/工具调用。",
-    "若遇到阻塞，说明原因与建议下一步，然后停止；不要对同一失败命令反复重试超过 2 次。",
+    "若遇到阻塞，调用 hub_report_blocker（或 hub_set_status 为 blocked）说明原因与建议下一步，然后停止；不要对同一失败命令反复重试超过 2 次。",
+    "可用 Hub 工具：hub_set_status / hub_report_blocker / hub_create_issue / hub_add_comment（改看板状态、报阻塞、拆子 Issue、写进度评论）。",
+    "若本次工作可沉淀为可复用 Skill，在摘要末尾追加唯一围栏（name 为 kebab-case）：",
+    "```fromlan-skill",
+    "name: example-skill",
+    "description: 一句话说明",
+    "---",
+    "# 标题",
+    "步骤与注意事项…",
+    "```",
     process.platform === "win32"
       ? "当前环境是 Windows：不要依赖 bash/Git Bash；用 read/write/edit 等文件工具，或通过可用的 shell 工具调用 powershell/cmd。"
       : "优先使用文件与项目工具完成任务。"
@@ -300,7 +322,28 @@ export async function enqueueForAgent(
       }
     }
 
-    const model = await resolveModel(opts, issueId);
+    const prior =
+      opts?.resumeFromTaskId
+        ? taskStore.getTask(opts.resumeFromTaskId)
+        : undefined;
+    const resume = decideResume({
+      prior:
+        prior && prior.issueId === issueId && prior.agentName === agentName
+          ? prior
+          : undefined,
+      forceFreshSession: !opts?.resumeFromTaskId,
+      cwdOverride: opts?.cwd,
+    });
+
+    const model = await resolveModel(
+      { ...opts, cwd: resume.cwd ?? opts?.cwd },
+      issueId
+    );
+    const reusePrior =
+      !!opts?.resumeFromTaskId &&
+      !!prior &&
+      prior.issueId === issueId &&
+      prior.agentName === agentName;
     const task = taskStore.createTask({
       issueId,
       agentName,
@@ -308,7 +351,12 @@ export async function enqueueForAgent(
       provider: model.provider,
       model: model.model,
       cwd: model.cwd,
+      workdir: model.cwd,
       attempt: taskStore.nextAttemptForIssue(issueId),
+      piSessionId: resume.resumePiSessionId,
+      sessionPoisoned: reusePrior
+        ? isSessionPoisonedPrior(prior!) || undefined
+        : undefined,
     });
     emitTask(task);
     await dispatch(task.id, opts?.promptOverride);
@@ -316,6 +364,12 @@ export async function enqueueForAgent(
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
+}
+
+function isSessionPoisonedPrior(prior: Task): boolean | undefined {
+  if (prior.sessionPoisoned) return true;
+  if (prior.errorInfo?.reason === "session_poisoned") return true;
+  return undefined;
 }
 
 /**
@@ -394,7 +448,7 @@ export async function maybeEnqueue(
 }
 
 function pushInbox(input: {
-  kind: "mention" | "assign" | "task_failed" | "subscription";
+  kind: "mention" | "assign" | "task_failed" | "subscription" | "skill_proposed";
   issueId?: string;
   title: string;
   body: string;
@@ -576,21 +630,60 @@ async function dispatch(
     if (updated) emitIssue(updated);
   }
 
-  try {
-    const snap = await d.sessions.start({
-      provider: task.provider,
-      model: task.model,
-      cwd: task.cwd,
-      title: `${issue.key} ${issue.title}`,
-      agentName: task.agentName,
-      issueId: task.issueId,
+  const tryStart = async (resumePiSessionId?: string) => {
+    return d.sessions.start({
+      provider: task!.provider,
+      model: task!.model,
+      cwd: task!.cwd,
+      title: `${issue!.key} ${issue!.title}`,
+      agentName: task!.agentName,
+      issueId: task!.issueId,
+      resumePiSessionId,
     });
+  };
+
+  try {
+    let snap;
+    const wantResume =
+      task.piSessionId &&
+      !task.sessionPoisoned &&
+      task.errorInfo?.reason !== "session_poisoned";
+    // 新 task 上的 piSessionId 来自 prior（retry / 逐行重试）；毒化则不传
+    const resumeId = wantResume ? task.piSessionId : undefined;
+
+    try {
+      snap = await tryStart(resumeId);
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      if (resumeId && /session_poisoned|get_state/i.test(msg)) {
+        // Multica：resume 失败 → 同 cwd 全新 session
+        const degraded = degradeAfterResumeFailure(
+          { cwd: task.cwd, resumePiSessionId: resumeId, reason: "resume" },
+          msg
+        );
+        task =
+          taskStore.updateTask(taskId, {
+            piSessionId: undefined,
+            sessionPoisoned: true,
+            cwd: degraded.cwd ?? task.cwd,
+            workdir: degraded.cwd ?? task.workdir ?? task.cwd,
+          }) ?? task;
+        emitTask(task);
+        snap = await tryStart(undefined);
+      } else {
+        throw e;
+      }
+    }
+
     setDispatchDefaults(task.provider, task.model, task.cwd);
 
     task =
       taskStore.updateTask(taskId, {
         status: "running",
         sessionId: snap.id,
+        piSessionId: snap.piSessionId ?? task.piSessionId,
+        workdir: task.cwd ?? task.workdir,
+        sessionPoisoned: false,
       }) ?? task;
     emitTask(task);
 
@@ -627,15 +720,23 @@ async function enqueueRetry(failedTask: Task): Promise<void> {
   if (failedTask.attempt >= settings.maxRetries) return;
   if (failedTask.trigger === "cron") return;
 
+  const resume = decideResume({
+    prior: failedTask,
+    forceFreshSession: false,
+  });
+
   const task = taskStore.createTask({
     issueId: failedTask.issueId,
     agentName: failedTask.agentName,
     trigger: "retry",
     provider: failedTask.provider,
     model: failedTask.model,
-    cwd: failedTask.cwd,
+    cwd: resume.cwd ?? failedTask.cwd,
+    workdir: resume.cwd ?? failedTask.workdir ?? failedTask.cwd,
     attempt: failedTask.attempt + 1,
     parentTaskId: failedTask.id,
+    piSessionId: resume.resumePiSessionId,
+    sessionPoisoned: isSessionPoisonedPrior(failedTask) || undefined,
   });
   emitTask(task);
   await dispatch(task.id);
@@ -659,6 +760,7 @@ export function failTaskWithInfo(
     status: "failed",
     error: errorInfo.message,
     errorInfo,
+    sessionPoisoned: errorInfo.reason === "session_poisoned" ? true : undefined,
     finishedAt: Date.now(),
   });
   if (updated) emitTask(updated);
@@ -676,9 +778,11 @@ export function failTaskWithInfo(
         ? "运行时离线"
         : errorInfo.reason === "runtime_recovery"
           ? "运行时恢复"
-          : errorInfo.reason === "agent_error"
-            ? "Agent 错误"
-            : "未知错误";
+          : errorInfo.reason === "session_poisoned"
+            ? "会话毒化"
+            : errorInfo.reason === "agent_error"
+              ? "Agent 错误"
+              : "未知错误";
 
   const c = issueStore.addComment({
     issueId: task.issueId,
@@ -731,10 +835,34 @@ export function onSessionCompleted(sessionId: string, summary: string): void {
   const task = taskStore.getTaskBySession(sessionId);
   if (!task || task.status !== "running") return;
 
-  const body = (
+  let body = (
     summary.trim() ||
     "（Agent 已结束，但未产出可读摘要。请查看会话记录或重新派活。）"
   ).slice(0, SUMMARY_MAX);
+
+  // Skill 提炼（Leader 跳过）
+  if (task.trigger !== "squad_leader") {
+    const mode = settingsStore.getSettings().skillExtractMode;
+    const extracted = maybeExtractAndWriteSkill(body, mode, task.agentName);
+    body = extracted.cleanSummary.slice(0, SUMMARY_MAX) || body;
+    if (extracted.written) {
+      if (mode === "propose") {
+        pushInbox({
+          kind: "skill_proposed",
+          issueId: task.issueId,
+          title: `Skill 已提炼：${extracted.written.name}`,
+          body: `${extracted.written.pathHint}（来自 Issue 派活；新会话生效，可在 Agents/Plugins 中编辑）`,
+        });
+      }
+    } else if (extracted.skillName && mode !== "off") {
+      pushInbox({
+        kind: "skill_proposed",
+        issueId: task.issueId,
+        title: `Skill 提炼失败：${extracted.skillName}`,
+        body: "解析到围栏但写入失败，请检查 skill 名称与磁盘权限。",
+      });
+    }
+  }
 
   const mentions = uniqueMentions(body).map((m) => ({
     kind: m.kind,
@@ -800,7 +928,13 @@ export function onSessionCompleted(sessionId: string, summary: string): void {
   }
 
   const issue = issueStore.getIssue(task.issueId);
-  if (issue && issue.status === "in_progress") {
+  // Agent 已通过 hub_* 改过状态 → 不再盲目 in_review
+  const latest = taskStore.getTask(task.id) ?? task;
+  if (
+    issue &&
+    issue.status === "in_progress" &&
+    !latest.agentStatusOverride
+  ) {
     const next = issueStore.setIssueStatus(task.issueId, "in_review");
     if (next) emitIssue(next);
   }

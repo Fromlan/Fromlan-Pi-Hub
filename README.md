@@ -70,7 +70,7 @@ Fromlan Pi Hub 采用**三进程模型**，追求进程隔离和崩溃恢复：
 
 **Issue 与 Session 的关系是 1:N。** Issue 是工作单元；Session 是执行尝试。一个 Issue 可以派生多个 Session（重试、替代方案、后续任务）。看板才是"真相之源"——聊天记录只是执行日志。
 
-**Task 是每一次派活。** Assign / `@mention` / Autopilot / Rerun / Squad 委派都产生一条 Task（六态：queued → dispatched → running → completed | failed | cancelled）。超时与可重试错误由 task-monitor 扫描；失败时 Issue 回滚到 `todo`。
+**Task 是每一次派活。** Assign / `@mention` / Autopilot / Rerun / Squad 委派都产生一条 Task（六态：queued → dispatched → running → completed | failed | cancelled）。超时与可重试错误由 task-monitor 扫描；失败时 Issue 回滚到 `todo`。会话毒化时复用 workdir、丢弃续聊 session；成功摘要可提炼 Skill；派活会话可注入 `hub_*` 工具让 Agent 改看板状态。
 
 **Project 是 Issue 分组，不是第二个工作区。** 一个 Issue 至多属于一个 Project；进度由关联 Issue 状态汇总。项目可配置 `defaultCwd`，派活时优先作为 pi 工作目录（对齐 Multica `local_directory`；不做 github_repo / 云仓库）。
 
@@ -83,14 +83,16 @@ Fromlan Pi Hub 采用**三进程模型**，追求进程隔离和崩溃恢复：
 - **Kanban 看板** — Multica/Linear 风格：280px 列、状态 tint、`PriorityIcon` 卡片、Working chip；拖拽改状态；Assign 即派活；可按项目过滤
 - **Projects** — Issue 多对一容器；状态 / 优先级 / Lead / 进度条；可选默认工作目录；删除项目只 unlink Issue
 - **Issue 详情** — 文档主栏 + 右侧 Properties（含项目选择）；截止日期 / 父 Issue；评论 `@mention`；重新派活；Task 执行历史
-- **任务可靠性** — 派活/执行双超时、错误分类重试（可配置）、失败写回评论 + 看板回滚
+- **任务可靠性** — 派活/执行双超时、错误分类重试（可配置）、失败写回评论 + 看板回滚；**毒化会话 resume**（钉住 `piSessionId`/workdir；毒化则同目录新会话；Issue 级 rerun 始终新会话；TaskHistory 逐行可续聊）
 - **Squad 路由** — Leader 读 roster → `@` 成员 → 成员各自起 Task；成员回帖可再唤醒 Leader；归档时 Issue 转给 Leader；无 mention 时 `pick-first-member` 兜底
 - **Autopilot** — cron 周期触发（创建 Issue 并派活 / 直接跑）；手动 Run now + 触发日志
-- **Inbox + 桌面通知** — 仅给人看（被 mention / 指派 / 任务失败）；Agent 不进 Inbox
+- **Inbox + 桌面通知** — 仅给人看（被 mention / 指派 / 任务失败 / Skill 提炼提议）；Agent 不进 Inbox
+- **Agent 主动协作** — 派活会话注入 `hub_*` 工具（改状态 / 报 blocker / 建子 Issue / 写评论）；本机 loopback 桥鉴权；Agent 已改状态则完成时不再盲目 `in_review`
+- **Skill 复利** — 成功摘要末尾 `fromlan-skill` 围栏 → 写入 Agent/全局 skills；设置 `off | propose | auto`（默认 propose）
 - **Pi Hub Helper** — 首次启动自动种子引导 Agent（对齐 Multica Helper）；欢迎弹窗三选一建 Issue 并派活；身份经 `IDENTITY.md` + `--append-system-prompt` 注入
 - **Agent / Skill 管理** — 独立 Agent 目录隔离；全局与 Agent 级 `SKILL.md`；zip 导入 Skill
 - **流式 Markdown** — 实时助手输出、代码高亮、thinking 折叠、工具调用可视化
-- **设置** — 默认 provider/model/cwd、超时与重试次数、通知策略、主题
+- **设置** — 默认 provider/model/cwd、超时与重试、Skill 提炼模式、通知策略、主题
 
 ### 路线图
 | 版本 | 主题 | 状态 |
@@ -101,8 +103,8 @@ Fromlan Pi Hub 采用**三进程模型**，追求进程隔离和崩溃恢复：
 | v0.7.0 | Agent Skills（SKILL.md + zip） | ✅ |
 | v0.8.0 | Autopilot Cron | ✅ |
 | v0.9.0 | Inbox + 桌面通知 | ✅ |
-| v0.9.x | Projects + Squad Multica 对齐加深 | ✅ |
-| v1.0.0 | 正式 GA —— 打磨与验收 | 目标 |
+| v0.9.x | Projects + Squad 加深；Skill 提炼 / 毒化 resume / hub_* | ✅ |
+| v1.0.0 | 正式 GA —— E2E 验收与发布打磨 | 目标 |
 
 灵感来自 [Multica](https://github.com/multica-ai/multica) 的任务模型与编排哲学；实现为 **pi-only、纯本地、桌面原生**。详见 [ROADMAP.md](./ROADMAP.md)。
 
@@ -110,6 +112,7 @@ Fromlan Pi Hub 采用**三进程模型**，追求进程隔离和崩溃恢复：
 - 多 CLI 支持 — **只做 pi**，这是立项定位
 - 云端运行时、WebSocket 队列、多人协作 / 多 Workspace
 - Project github_repo Resource、侧栏个人钉选、Labels
+- Autopilot Webhook（仅 cron + Run now）
 - 远程 `/reload` 注入（提示用户手动 reload）
 
 ---
@@ -247,7 +250,7 @@ Fromlan Pi Hub uses a **three-process model** designed for process isolation and
 
 **Issue → Session = 1:N.** An issue is a unit of work; sessions are execution attempts. One issue can spawn multiple sessions (retries, alternative approaches, follow-ups). The Kanban board is the source of truth — chats are execution logs.
 
-**A Task is every dispatch.** Assign / `@mention` / Autopilot / Rerun / Squad delegation each create a Task (six states: queued → dispatched → running → completed | failed | cancelled). `task-monitor` enforces dual timeouts and classified retries; failures roll the Issue back to `todo`.
+**A Task is every dispatch.** Assign / `@mention` / Autopilot / Rerun / Squad delegation each create a Task (six states: queued → dispatched → running → completed | failed | cancelled). `task-monitor` enforces dual timeouts and classified retries; failures roll the Issue back to `todo`. Poisoned sessions reuse the workdir with a fresh conversation; successful summaries can extract Skills; dispatch sessions may inject `hub_*` tools so agents can update the board.
 
 **A Project groups Issues — it is not a second workspace.** An Issue belongs to at most one Project; progress rolls up from linked Issue statuses. Optional `defaultCwd` becomes the preferred pi working directory on dispatch (Multica `local_directory` analogue; no github_repo / cloud checkout).
 
@@ -260,14 +263,16 @@ Fromlan Pi Hub uses a **three-process model** designed for process isolation and
 - **Kanban board** — Multica/Linear-style: 280px columns, status tint, `PriorityIcon` cards, Working chip; drag status; assign to auto-dispatch; filter by project
 - **Projects** — many Issues → one Project; status / priority / lead / progress; optional default cwd; deleting a project only unlinks Issues
 - **Issue detail** — document main + Properties (incl. project picker); due date / parent; comment `@mention`; rerun; Task history
-- **Task reliability** — dispatch/running timeouts, classified retries (configurable), failure comments + board rollback
+- **Task reliability** — dual timeouts, classified retries, failure comments + board rollback; **poisoned-session resume** (pin `piSessionId`/workdir; poisoned → same cwd, fresh session; issue-level rerun always fresh; TaskHistory row retry can continue)
 - **Squad routing** — leader reads roster → `@` members → member Tasks; member updates can re-wake the leader; archive transfers Issues to the leader; `pick-first-member` if mentions are missing
 - **Autopilot** — cron triggers (create issue + dispatch / run); Run now + run log
-- **Inbox + desktop notifications** — humans only (mention / assign / task failed); agents never read Inbox
+- **Inbox + desktop notifications** — humans only (mention / assign / task failed / skill proposed); agents never read Inbox
+- **Agent-driven PM** — dispatch sessions inject `hub_*` tools (set status / report blocker / create child issue / comment) via a localhost bridge; skips blind `in_review` if the agent already changed status
+- **Skill compounding** — optional `fromlan-skill` fence in the success summary → write agent/global skills; settings `off | propose | auto` (default propose)
 - **Pi Hub Helper** — first-run seed of a guide agent (Multica Helper analogue); welcome modal with three starter Issues; identity via `IDENTITY.md` + `--append-system-prompt`
 - **Agent / Skill management** — per-agent isolation; global & agent `SKILL.md`; zip import
 - **Streaming Markdown** — live output, code highlight, thinking fold, tool visualization
-- **Settings** — default provider/model/cwd, timeouts/retries, notify mode, theme
+- **Settings** — default provider/model/cwd, timeouts/retries, skill extract mode, notify mode, theme
 
 ### Roadmap
 | Stage | Theme | Status |
@@ -278,8 +283,8 @@ Fromlan Pi Hub uses a **three-process model** designed for process isolation and
 | v0.7.0 | Agent Skills (SKILL.md + zip) | ✅ |
 | v0.8.0 | Autopilot cron | ✅ |
 | v0.9.0 | Inbox + desktop notifications | ✅ |
-| v0.9.x | Projects + deeper Squad Multica parity | ✅ |
-| v1.0.0 | GA — polish & acceptance | Target |
+| v0.9.x | Projects + Squad deepen; skill extract / poisoned resume / hub_* | ✅ |
+| v1.0.0 | GA — E2E acceptance & release polish | Target |
 
 Inspired by [Multica](https://github.com/multica-ai/multica)'s task model; implemented as **pi-only, local-first, desktop-native**. See [ROADMAP.md](./ROADMAP.md).
 
@@ -287,6 +292,7 @@ Inspired by [Multica](https://github.com/multica-ai/multica)'s task model; imple
 - Multi-CLI support — **pi only**, by design
 - Cloud runtimes, WebSocket queues, multi-user / multi-workspace
 - Project github_repo resources, personal sidebar pins, Labels
+- Autopilot webhooks (cron + Run now only)
 - Remote `/reload` injection (we prompt the user to reload manually)
 
 ---

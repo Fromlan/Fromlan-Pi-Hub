@@ -86,6 +86,9 @@ export function createTask(input: {
   cwd?: string;
   attempt?: number;
   parentTaskId?: string;
+  piSessionId?: string;
+  workdir?: string;
+  sessionPoisoned?: boolean;
 }): Task {
   const task: Task = {
     id: randomUUID(),
@@ -97,6 +100,9 @@ export function createTask(input: {
     provider: input.provider,
     model: input.model,
     cwd: input.cwd,
+    workdir: input.workdir ?? input.cwd,
+    piSessionId: input.piSessionId,
+    sessionPoisoned: input.sessionPoisoned,
     parentTaskId: input.parentTaskId,
     createdAt: Date.now(),
   };

@@ -41,7 +41,10 @@ export const IPC = {
   // 独立 agent 管理类（renderer -> main，invoke/handle）
   agentList: "agent:list",
   agentCreate: "agent:create",
+  agentUpdate: "agent:update",
   agentDelete: "agent:delete",
+  agentIdentityRead: "agent:identity:read",
+  agentIdentitySave: "agent:identity:save",
   agentFileList: "agent:file:list",
   agentFileRead: "agent:file:read",
   agentFileSave: "agent:file:save",
@@ -157,6 +160,9 @@ export type PanelKind =
   | "inbox"
   | "projects";
 
+/** 成功派活后从摘要提炼 Skill 的模式。 */
+export type SkillExtractMode = "off" | "propose" | "auto";
+
 /** 应用级设置（持久化于 {userData}/fromlan-pi-hub/settings.json）。 */
 export interface AppSettings {
   defaultProvider: string;
@@ -169,6 +175,11 @@ export interface AppSettings {
   /** 总尝试次数上限（含首次），默认 2。 */
   maxRetries: number;
   notifyMode: "background" | "always" | "off";
+  /**
+   * 成功 run 后是否从摘要 `fromlan-skill` 围栏提炼 Skill。
+   * propose（默认）= 写入并 Inbox 提示；auto = 静默写入；off = 忽略。
+   */
+  skillExtractMode: SkillExtractMode;
   /**
    * Pi Hub Helper 欢迎弹窗完成时间（选卡或跳过）。
    * undefined = 尚未完成，应显示引导弹窗。
@@ -217,6 +228,20 @@ export interface StartSessionOpts {
   agentName?: string;
   /** 阶段 1：从 IssueDetail.Run 启动时传入；用于 session-card 来源标签与会话反查。 */
   issueId?: string;
+  /**
+   * 续聊用的 pi 内部 session id（`--session`）。
+   * 仅当 workdir 仍可复用且会话未毒化时传入。
+   */
+  resumePiSessionId?: string;
+  /** 额外注入的 pi extension 绝对路径（如 Hub Issue 工具）。 */
+  extraExtensions?: string[];
+  /** 追加给 pi 子进程的 env（经白名单二次过滤；键名勿含 TOKEN/SECRET/API_KEY 子串）。 */
+  env?: Record<string, string>;
+  /**
+   * 是否注入 Hub Issue 工具桥（默认：有 issueId 时 true）。
+   * 为 false 时不注入 hub-issue extension / bridge env。
+   */
+  injectHubTools?: boolean;
 }
 
 /** Agent 元数据。 */
@@ -226,12 +251,31 @@ export interface AgentMeta {
   createdAt: number;
 }
 
+/** Agent 元数据可更新字段（名称不可改）。 */
+export interface AgentUpdatePatch {
+  description?: string;
+}
+
 /** Agent 变更事件负载。 */
 export interface AgentChangedPayload {
   /** agent 名称；fileList/fileRead/... 事件也会带上 plugin 子类型以供 renderer 局部刷新。 */
   name: string;
   type?: PluginType;
-  action: "created" | "deleted" | "saved" | "fileCreated" | "fileSaved" | "fileDeleted";
+  action:
+    | "created"
+    | "deleted"
+    | "updated"
+    | "identitySaved"
+    | "saved"
+    | "fileCreated"
+    | "fileSaved"
+    | "fileDeleted";
+}
+
+/** IDENTITY.md 读取结果。exists=false 时 body 为空字符串。 */
+export interface AgentIdentityFile {
+  body: string;
+  exists: boolean;
 }
 
 /** get_available_models 返回的模型条目（宽松结构）。 */
@@ -424,7 +468,12 @@ export interface AutopilotRun {
 }
 
 /** Inbox 仅给人看（agent 不进 inbox）。 */
-export type InboxKind = "mention" | "assign" | "task_failed" | "subscription";
+export type InboxKind =
+  | "mention"
+  | "assign"
+  | "task_failed"
+  | "subscription"
+  | "skill_proposed";
 
 export interface InboxItem {
   id: string;
@@ -472,6 +521,7 @@ export type TaskErrorReason =
   | "timeout"
   | "runtime_offline"
   | "runtime_recovery"
+  | "session_poisoned"
   | "agent_error"
   | "unknown";
 
@@ -492,6 +542,20 @@ export interface Task {
   provider: string;
   model: string;
   cwd?: string;
+  /**
+   * 实际工作目录（与 cwd 同步；用于 resume 门闸：目录是否仍存在）。
+   * Multica PriorWorkDir 本地切片。
+   */
+  workdir?: string;
+  /** 派活时钉住的 pi 内部 session id（完成/失败再写一次）。 */
+  piSessionId?: string;
+  /** 本失败是否判定为会话毒化（复用 cwd、丢弃 session）。 */
+  sessionPoisoned?: boolean;
+  /**
+   * Agent 通过 hub_* 工具主动设置的 Issue 状态。
+   * 有值时 onSessionCompleted 不再盲目 in_progress → in_review。
+   */
+  agentStatusOverride?: IssueStatus;
   /** 人类可读错误摘要（展示用）。 */
   error?: string;
   errorInfo?: TaskErrorInfo;
@@ -507,4 +571,9 @@ export interface IssueRerunOpts {
   provider?: string;
   model?: string;
   cwd?: string;
+  /**
+   * TaskHistory 逐行重试：携带源 task id，按 Multica 语义复用 workdir/session
+   *（毒化则仅复用 cwd）。不传 = Issue 级 rerun → 始终新会话。
+   */
+  resumeFromTaskId?: string;
 }

@@ -167,6 +167,28 @@ export function SettingsPanel() {
             }
           />
         </label>
+        <label className="form-row">
+          <span className="form-label">成功后提炼 Skill</span>
+          <select
+            className="form-input"
+            value={draft.skillExtractMode ?? "propose"}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                skillExtractMode: e.target
+                  .value as AppSettings["skillExtractMode"],
+              })
+            }
+          >
+            <option value="propose">提议（写入 + Inbox 提示）</option>
+            <option value="auto">自动写入</option>
+            <option value="off">关闭</option>
+          </select>
+        </label>
+        <p className="settings-row-hint">
+          Agent 在摘要末尾用 fromlan-skill 围栏提交可复用流程时，写入该 Agent 的
+          skills 目录（新会话生效）。
+        </p>
       </section>
 
       <section className="settings-section">

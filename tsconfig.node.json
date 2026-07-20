@@ -17,5 +17,6 @@
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
     "electron.vite.config.ts"
-  ]
+  ],
+  "exclude": ["src/shared/default-agents/extensions/**"]
 }

@@ -13,6 +13,8 @@ import {
   type PluginChangedPayload,
   type AgentMeta,
   type AgentChangedPayload,
+  type AgentUpdatePatch,
+  type AgentIdentityFile,
   type Issue,
   type IssueCreateInput,
   type IssueStatus,
@@ -107,6 +109,8 @@ const appAPI = {
 
 /** 读取结果用判别联合：成功返回 PluginFile，失败返回 { ok:false, error }。pluginAPI.read 与 agentAPI.fileRead 共用。 */
 type FileReadResult = PluginFile | { ok: false; error: string };
+/** IDENTITY 读取：成功返回 AgentIdentityFile，失败返回 { ok:false, error }。 */
+type IdentityReadResult = AgentIdentityFile | { ok: false; error: string };
 
 const pluginAPI = {
   list: (type: PluginType): Promise<PluginItemMeta[]> =>
@@ -140,11 +144,24 @@ const agentAPI = {
   list: (): Promise<AgentMeta[]> => ipcRenderer.invoke(IPC.agentList),
   create: (
     name: string,
-    description?: string
+    description?: string,
+    identity?: string
   ): Promise<IpcResult<{ meta: AgentMeta }>> =>
-    ipcRenderer.invoke(IPC.agentCreate, name, description),
+    ipcRenderer.invoke(IPC.agentCreate, name, description, identity),
+  update: (
+    name: string,
+    patch: AgentUpdatePatch
+  ): Promise<IpcResult<{ meta: AgentMeta }>> =>
+    ipcRenderer.invoke(IPC.agentUpdate, name, patch),
   delete: (name: string): Promise<IpcResult<Record<string, never>>> =>
     ipcRenderer.invoke(IPC.agentDelete, name),
+  identityRead: (name: string): Promise<IdentityReadResult> =>
+    ipcRenderer.invoke(IPC.agentIdentityRead, name),
+  identitySave: (
+    name: string,
+    body: string
+  ): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.agentIdentitySave, name, body),
   fileList: (name: string, type: PluginType): Promise<PluginItemMeta[]> =>
     ipcRenderer.invoke(IPC.agentFileList, name, type),
   fileRead: (

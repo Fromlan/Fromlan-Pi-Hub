@@ -4,13 +4,16 @@ import { homedir } from "os";
 import * as agentsStore from "./agents-store";
 import type {
   AgentMeta,
+  AgentUpdatePatch,
+  AgentIdentityFile,
   PluginType,
   PluginItemMeta,
   PluginFile,
 } from "../shared/types";
 
 /**
- * 管理 ~/.pi/agents/<name>/{prompts,skills,extensions}/ 下的插件文件。
+ * 管理 ~/.pi/agents/<name>/{prompts,skills,extensions}/ 下的插件文件，
+ * 以及根目录 IDENTITY.md（对齐 Multica agent.instructions → 系统提示）。
  *
  * 与 plugin-manager.ts 的关系：
  * - plugin-manager 管理 ~/.pi/agent/（全局共享）；
@@ -18,6 +21,7 @@ import type {
  *
  * 安全边界（与 plugin-manager 对齐）：
  * - 路径严格收敛到 ~/.pi/agents/<name>/<type>/ 白名单目录；
+ * - IDENTITY.md 固定在 agent 根目录，realpath 须仍在该根下；
  * - 名称正则校验，挡掉 ../、/、空字符串；
  * - 写入前若目标是符号链接，realpath 二次校验必须仍在白名单内；
  * - 软链接删除只 unlink 链接本身，不跟随删除目标。
@@ -29,6 +33,7 @@ import type {
 
 const ROOT = join(homedir(), ".pi", "agents");
 const NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
+const IDENTITY_FILENAME = "IDENTITY.md";
 
 const EXT_BY_TYPE: Record<PluginType, string> = {
   prompts: ".md",
@@ -46,8 +51,31 @@ function agentDir(name: string): string {
   return join(ROOT, name);
 }
 
+function identityPath(name: string): string {
+  return join(agentDir(name), IDENTITY_FILENAME);
+}
+
 function typeDir(name: string, type: PluginType): string {
   return join(agentDir(name), type);
+}
+
+/** IDENTITY.md 逻辑路径必须恰好是 agent 根下的固定文件名。 */
+function ensureSafeIdentityLogical(name: string, resolved: string): void {
+  const expected = identityPath(name).replace(/\\/g, sep);
+  const normalized = resolved.replace(/\\/g, sep);
+  if (normalized !== expected) {
+    throw new Error(`拒绝访问：仅允许 ${IDENTITY_FILENAME}`);
+  }
+}
+
+/** 解析 symlink 后真实路径须仍位于该 agent 根目录内。 */
+function ensureSafeIdentityRealPath(name: string, resolved: string): void {
+  ensureSafeIdentityLogical(name, resolved);
+  const base = agentDir(name).replace(/\\/g, sep) + sep;
+  const real = realpathSync(resolved).replace(/\\/g, sep);
+  if (!real.startsWith(base)) {
+    throw new Error(`拒绝访问：符号链接目标超出白名单 (${base})`);
+  }
 }
 
 function resolveItemPath(name: string, type: PluginType, item: string): string {
@@ -177,7 +205,11 @@ export function get(name: string): AgentMeta | undefined {
   return list().find((a) => a.name === name);
 }
 
-export function create(name: string, description?: string): AgentMeta {
+export function create(
+  name: string,
+  description?: string,
+  identity?: string
+): AgentMeta {
   const v = validateAgentName(name);
   if (v) throw new Error(v);
   const dir = agentDir(name);
@@ -189,6 +221,13 @@ export function create(name: string, description?: string): AgentMeta {
   mkdirSync(typeDir(name, "prompts"), { recursive: true });
   mkdirSync(typeDir(name, "skills"), { recursive: true });
   mkdirSync(typeDir(name, "extensions"), { recursive: true });
+
+  const trimmedIdentity = identity?.trim();
+  if (trimmedIdentity) {
+    const idPath = identityPath(name);
+    ensureSafeIdentityLogical(name, idPath);
+    writeFileSync(idPath, trimmedIdentity, "utf8");
+  }
 
   const meta: AgentMeta = {
     name,
@@ -205,6 +244,50 @@ export function create(name: string, description?: string): AgentMeta {
     agentsStore.saveAgents(all);
   }
   return meta;
+}
+
+export function update(name: string, patch: AgentUpdatePatch): AgentMeta {
+  const v = validateAgentName(name);
+  if (v) throw new Error(v);
+  const all = agentsStore.loadAgents();
+  const idx = all.findIndex((a) => a.name === name);
+  if (idx < 0) throw new Error(`agent 不存在: ${name}`);
+  const next = { ...all[idx] };
+  if (patch.description !== undefined) {
+    const d = patch.description.trim();
+    next.description = d || undefined;
+  }
+  all[idx] = next;
+  agentsStore.saveAgents(all);
+  return next;
+}
+
+/** 读取 agent 根目录 IDENTITY.md；不存在时 exists=false、body=""。 */
+export function readIdentity(name: string): AgentIdentityFile {
+  const v = validateAgentName(name);
+  if (v) throw new Error(v);
+  const abs = identityPath(name);
+  ensureSafeIdentityLogical(name, abs);
+  if (!existsSync(abs)) return { body: "", exists: false };
+  ensureSafeIdentityRealPath(name, abs);
+  return { body: readFileSync(abs, "utf8"), exists: true };
+}
+
+/** 写入 / 创建 IDENTITY.md（不存在则创建）。 */
+export function saveIdentity(name: string, body: string): void {
+  const v = validateAgentName(name);
+  if (v) throw new Error(v);
+  if (!get(name) && !existsSync(agentDir(name))) {
+    throw new Error(`agent 不存在: ${name}`);
+  }
+  const dir = agentDir(name);
+  mkdirSync(dir, { recursive: true });
+  const abs = identityPath(name);
+  ensureSafeIdentityLogical(name, abs);
+  if (existsSync(abs)) {
+    ensureSafeIdentityRealPath(name, abs);
+  }
+  writeFileSync(abs, body, "utf8");
 }
 
 export function remove(name: string): void {
@@ -419,4 +502,4 @@ export function deleteFile(name: string, type: PluginType, item: string): void {
 }
 
 /** 测试用：暴露根路径（仅 main 内部）。 */
-export const _paths = { ROOT, agentDir, typeDir, validateAgentName };
+export const _paths = { ROOT, agentDir, typeDir, identityPath, validateAgentName };

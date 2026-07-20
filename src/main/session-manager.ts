@@ -5,6 +5,8 @@ import { homedir } from "os";
 import { existsSync, readFileSync } from "fs";
 import { PiRpcClient } from "./pi-rpc-client";
 import * as persistence from "./persistence";
+import { getBridgeEnv, isBridgeRunning } from "./hub-agent-bridge";
+import { ensureHubIssueExtensionPath } from "./hub-issue-extension";
 import type {
   SessionSnapshot,
   SessionStatus,
@@ -72,12 +74,28 @@ export class SessionManager extends EventEmitter {
   /** 创建一个新的 pi session 并等待其就绪。 */
   async start(opts: StartSessionOpts): Promise<SessionSnapshot> {
     const id = randomUUID();
+    const env: Record<string, string> = { ...(opts.env ?? {}) };
+    const extraExtensions = [...(opts.extraExtensions ?? [])];
+    const injectHub =
+      !!opts.issueId && opts.injectHubTools !== false && isBridgeRunning();
+    if (injectHub) {
+      Object.assign(env, getBridgeEnv(id));
+      try {
+        extraExtensions.push(ensureHubIssueExtensionPath());
+      } catch (e) {
+        console.error("[session] hub-issue extension ensure failed:", e);
+      }
+    }
+
     const client = new PiRpcClient({
       provider: opts.provider,
       model: opts.model,
       cwd: opts.cwd,
       noSession: opts.noSession ?? false,
+      sessionId: opts.resumePiSessionId,
       agentName: opts.agentName,
+      env,
+      extraExtensions: extraExtensions.length ? extraExtensions : undefined,
     });
     const session: ManagedSession = {
       id,
@@ -113,6 +131,11 @@ export class SessionManager extends EventEmitter {
     } catch (e) {
       // get_state 失败：关掉子进程并从 map 移除，向上抛错让 IPC 返回 ok:false
       await this.failStart(id, session);
+      const msg = e instanceof Error ? e.message : String(e);
+      // --session 续聊失败时带上标记，便于 issue-runner 降级为 fresh session
+      if (opts.resumePiSessionId) {
+        throw new Error(`session_poisoned: resume get_state 失败 — ${msg}`);
+      }
       throw e instanceof Error ? e : new Error(String(e));
     }
 

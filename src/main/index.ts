@@ -17,11 +17,16 @@ import { ensurePiHubHelper } from "./guide-agent";
 import { uniqueMentions } from "../shared/mention";
 import { startTaskMonitor, stopTaskMonitor } from "./task-monitor";
 import {
+  startHubAgentBridge,
+  stopHubAgentBridge,
+} from "./hub-agent-bridge";
+import {
   IPC,
   type StartSessionOpts,
   type PluginType,
   type PluginChangedPayload,
   type AgentChangedPayload,
+  type AgentUpdatePatch,
   type IssueCreateInput,
   type IssueStatus,
   type Assignee,
@@ -375,10 +380,23 @@ ipcMain.handle(IPC.agentList, () => {
   }
 });
 
-ipcMain.handle(IPC.agentCreate, (_e, name: string, description?: string) => {
+ipcMain.handle(
+  IPC.agentCreate,
+  (_e, name: string, description?: string, identity?: string) => {
+    try {
+      const meta = agentManager.create(name, description, identity);
+      broadcastAgent({ name, action: "created" });
+      return { ok: true, meta };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+);
+
+ipcMain.handle(IPC.agentUpdate, (_e, name: string, patch: AgentUpdatePatch) => {
   try {
-    const meta = agentManager.create(name, description);
-    broadcastAgent({ name, action: "created" });
+    const meta = agentManager.update(name, patch ?? {});
+    broadcastAgent({ name, action: "updated" });
     return { ok: true, meta };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -389,6 +407,24 @@ ipcMain.handle(IPC.agentDelete, (_e, name: string) => {
   try {
     agentManager.remove(name);
     broadcastAgent({ name, action: "deleted" });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.agentIdentityRead, (_e, name: string) => {
+  try {
+    return agentManager.readIdentity(name);
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle(IPC.agentIdentitySave, (_e, name: string, body: string) => {
+  try {
+    agentManager.saveIdentity(name, body ?? "");
+    broadcastAgent({ name, action: "identitySaved" });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -750,6 +786,7 @@ ipcMain.handle(IPC.pluginImportSkillZip, async () => {
 // ── App 生命周期 ──
 app.whenReady().then(() => {
   sessionManager.loadPersisted();
+  startHubAgentBridge(broadcast);
   try {
     ensurePiHubHelper();
   } catch (e) {
@@ -764,6 +801,7 @@ app.whenReady().then(() => {
 
 app.on("will-quit", () => {
   stopTaskMonitor();
+  stopHubAgentBridge();
 });
 
 // 所有窗口关闭后退出（macOS 除外，遵循 Electron 惯例）

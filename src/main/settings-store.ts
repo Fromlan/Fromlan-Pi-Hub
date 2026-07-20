@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   runningTimeoutMs: 2.5 * 60 * 60 * 1000,
   maxRetries: 2,
   notifyMode: "background",
+  skillExtractMode: "propose",
   onboardedAt: undefined,
 };
 
@@ -48,6 +49,12 @@ function normalize(raw: Partial<AppSettings>): AppSettings {
       raw.notifyMode === "always" || raw.notifyMode === "off"
         ? raw.notifyMode
         : DEFAULT_SETTINGS.notifyMode,
+    skillExtractMode:
+      raw.skillExtractMode === "off" ||
+      raw.skillExtractMode === "auto" ||
+      raw.skillExtractMode === "propose"
+        ? raw.skillExtractMode
+        : DEFAULT_SETTINGS.skillExtractMode,
     onboardedAt:
       typeof raw.onboardedAt === "number" && raw.onboardedAt > 0
         ? raw.onboardedAt

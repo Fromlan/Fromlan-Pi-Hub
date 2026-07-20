@@ -26,6 +26,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   runningTimeoutMs: 2.5 * 60 * 60 * 1000,
   maxRetries: 2,
   notifyMode: "background",
+  skillExtractMode: "propose",
   onboardedAt: undefined,
 };
 

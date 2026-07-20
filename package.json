@@ -1,7 +1,7 @@
 {
   "name": "fromlan-pi-hub",
-  "version": "0.9.1",
-  "description": "Fromlan Pi Hub — 本地 pi Agent 工位台：Kanban、Projects、Squad、Autopilot、Inbox",
+  "version": "0.9.2",
+  "description": "Fromlan Pi Hub — 本地 pi Agent 工位台：Kanban、Projects、Squad、Autopilot、Inbox、Skill 复利",
   "author": "Fromlan",
   "main": "dist/main/index.js",
   "scripts": {

@@ -45,16 +45,27 @@ export function TaskHistory({ issueId }: Props) {
     [tasks, issueId]
   );
 
-  const retryRow = async (_task: Task) => {
-    setRerunningId(_task.id);
-    const r = await window.issueAPI.rerun(issueId);
+  const retryRow = async (task: Task) => {
+    setRerunningId(task.id);
+    const r = await window.issueAPI.rerun(issueId, {
+      resumeFromTaskId: task.id,
+      cwd: task.workdir ?? task.cwd,
+    });
     setRerunningId(null);
     if (!r.ok) {
       setNotice(`重试失败：${r.error}`);
       return;
     }
     if (r.skipped) setNotice(`未派活：${r.skipped}`);
-    else setNotice("已重新派活");
+    else {
+      const poisoned =
+        task.sessionPoisoned || task.errorInfo?.reason === "session_poisoned";
+      setNotice(
+        poisoned
+          ? "已重试（复用工作目录，新会话）"
+          : "已重试（尽量续聊同一会话）"
+      );
+    }
   };
 
   return (
@@ -90,7 +101,7 @@ export function TaskHistory({ issueId }: Props) {
                         className="btn btn-sm task-history-retry"
                         disabled={rerunningId === t.id}
                         onClick={() => retryRow(t)}
-                        title="重新派活此 issue"
+                        title="按此行复用 workdir/session（毒化则仅复用目录）"
                       >
                         {rerunningId === t.id ? "…" : "重试"}
                       </button>
