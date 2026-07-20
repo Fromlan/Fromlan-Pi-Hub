@@ -57,6 +57,16 @@ export function getTaskBySession(sessionId: string): Task | undefined {
   return tasks.find((t) => t.sessionId === sessionId && ACTIVE.has(t.status));
 }
 
+/** 任意状态（含已完成）按 sessionId 查找最近一条。 */
+export function findTaskBySessionId(sessionId: string): Task | undefined {
+  let best: Task | undefined;
+  for (const t of tasks) {
+    if (t.sessionId !== sessionId) continue;
+    if (!best || t.createdAt > best.createdAt) best = t;
+  }
+  return best;
+}
+
 /** 同一 (issue, agent) 是否已有 queued/dispatched（Multica pending 去重）。 */
 export function hasPendingTask(issueId: string, agentName: string): boolean {
   return tasks.some(

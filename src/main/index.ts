@@ -13,6 +13,8 @@ import * as projectStore from "./project-store";
 import * as autopilotStore from "./autopilot-store";
 import * as autopilotManager from "./autopilot-manager";
 import * as inboxStore from "./inbox-store";
+import * as usageStore from "./usage-store";
+import * as providerProfileStore from "./provider-profile-store";
 import { ensurePiHubHelper } from "./guide-agent";
 import { uniqueMentions } from "../shared/mention";
 import { startTaskMonitor, stopTaskMonitor } from "./task-monitor";
@@ -38,6 +40,10 @@ import {
   type Autopilot,
   type Project,
   type ProjectCreateInput,
+  type UsageSummaryQuery,
+  type ProviderProfileUpsertInput,
+  type Task,
+  type UsageRecord,
 } from "../shared/types";
 
 const sessionManager = new SessionManager();
@@ -149,6 +155,12 @@ sessionManager.on(
     issueRunner.onSessionFailed(p.sessionId, p.error);
   }
 );
+sessionManager.on("usage-recorded", (_r: UsageRecord) => {
+  broadcast(IPC.usageChanged, null);
+});
+sessionManager.on("usage-task-updated", (t: Task) => {
+  broadcast(IPC.taskChanged, t);
+});
 
 // ── Session IPC ──
 ipcMain.handle(IPC.sessionList, () => sessionManager.list());
@@ -757,6 +769,75 @@ ipcMain.handle(IPC.inboxMarkAllRead, () => {
 ipcMain.handle(IPC.inboxClear, () => {
   inboxStore.clearInbox();
   return { ok: true };
+});
+
+// ── Usage IPC ──
+ipcMain.handle(IPC.usageSummary, (_e, query?: UsageSummaryQuery) =>
+  usageStore.summarize(query ?? {})
+);
+ipcMain.handle(IPC.usageByIssue, (_e, issueId: string) =>
+  usageStore.listByIssue(issueId)
+);
+ipcMain.handle(IPC.usageClear, () => {
+  usageStore.clearUsage();
+  broadcast(IPC.usageChanged, null);
+  return { ok: true };
+});
+
+// ── Provider Profile IPC ──
+ipcMain.handle(IPC.providerList, () => providerProfileStore.listProfiles());
+ipcMain.handle(IPC.providerUpsert, (_e, input: ProviderProfileUpsertInput) => {
+  try {
+    const profile = providerProfileStore.upsertProfile(input);
+    broadcast(IPC.providerChanged, providerProfileStore.listProfiles());
+    return { ok: true, profile };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+ipcMain.handle(IPC.providerDelete, (_e, id: string) => {
+  try {
+    providerProfileStore.deleteProfile(id);
+    broadcast(IPC.providerChanged, providerProfileStore.listProfiles());
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+ipcMain.handle(IPC.providerActivate, (_e, id: string) => {
+  try {
+    const profile = providerProfileStore.activateProfile(id);
+    // 同步 Hub 派活默认 provider
+    const settings = settingsStore.updateSettings({
+      defaultProvider: profile.providerId,
+    });
+    issueRunner.setDispatchDefaults(
+      settings.defaultProvider,
+      settings.defaultModel,
+      settings.defaultCwd
+    );
+    broadcast(IPC.providerChanged, providerProfileStore.listProfiles());
+    return { ok: true, profile };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+ipcMain.handle(IPC.providerGetSecret, (_e, id: string) => {
+  try {
+    const apiKey = providerProfileStore.getSecret(id);
+    return { ok: true, apiKey };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+ipcMain.handle(IPC.providerImportFromAuth, () => {
+  try {
+    const r = providerProfileStore.importFromAuth();
+    broadcast(IPC.providerChanged, providerProfileStore.listProfiles());
+    return { ok: true, imported: r.imported, profiles: r.profiles };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
 });
 
 // ── Skill zip 导入 ──

@@ -14,6 +14,8 @@ import { SquadsPanel } from "./components/SquadsPanel";
 import { AutopilotsPanel } from "./components/AutopilotsPanel";
 import { InboxPanel } from "./components/InboxPanel";
 import { ProjectsPanel } from "./components/ProjectsPanel";
+import { UsagePanel } from "./components/UsagePanel";
+import { ProvidersPanel } from "./components/ProvidersPanel";
 import { HelperWelcomeModal } from "./components/HelperWelcomeModal";
 
 export function App() {
@@ -107,6 +109,10 @@ export function App() {
     mainPanel = <AutopilotsPanel />;
   } else if (activePanel === "inbox") {
     mainPanel = <InboxPanel />;
+  } else if (activePanel === "usage") {
+    mainPanel = <UsagePanel />;
+  } else if (activePanel === "providers") {
+    mainPanel = <ProvidersPanel />;
   } else {
     mainPanel = (
       <div className="chat-layout">

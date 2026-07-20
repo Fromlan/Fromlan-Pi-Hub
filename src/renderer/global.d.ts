@@ -9,6 +9,8 @@ import type {
   AutopilotAPI,
   InboxAPI,
   ProjectAPI,
+  UsageAPI,
+  ProviderAPI,
 } from "../preload/index";
 
 declare global {
@@ -22,6 +24,8 @@ declare global {
     autopilotAPI: AutopilotAPI;
     inboxAPI: InboxAPI;
     projectAPI: ProjectAPI;
+    usageAPI: UsageAPI;
+    providerAPI: ProviderAPI;
     useStoreDevtools: typeof import("./store").useStore;
   }
 }

@@ -137,6 +137,14 @@ export function TaskHistory({ issueId }: Props) {
                       )}
                     </div>
                   )}
+                  {t.usage && (
+                    <div className="task-history-usage tabular">
+                      {t.usage.inputTokens}/{t.usage.outputTokens} tokens
+                      {t.usage.costUsd > 0
+                        ? ` · $${t.usage.costUsd < 0.01 ? t.usage.costUsd.toFixed(4) : t.usage.costUsd.toFixed(3)}`
+                        : ""}
+                    </div>
+                  )}
                 </div>
               </li>
             );

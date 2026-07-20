@@ -31,7 +31,7 @@ Fromlan Pi Hub 采用 **三列 CSS Grid**：
 
 | 列 | 宽度 | 内容 | 关键类 |
 |---|---|---|---|
-| IconRail | 48px | 顶级导航：新建 / 看板·Agents·Squads·Plugins·Autopilots·Inbox / 主题·设置 | `.iconrail` |
+| IconRail | 48px | 顶级导航：看板·Projects·Agents·Squads·Plugins·订阅·用量·Autopilots·Inbox / 主题·设置 | `.iconrail` |
 | Sidebar | 280px | 视图切换 + 搜索 + 运行中/已停止会话（或面板上下文） | `.sidebar` |
 | Main | 1fr | `activePanel` + `viewMode` 路由区（Kanban / IssueDetail / Session / 各管理面板） | `.main` |
 
@@ -315,6 +315,144 @@ hover / focus / active 高亮**不另设 token**，用 `oklch(from var(--x) l c 
 
 ---
 
+#### 8.7 用量（UsagePanel）与订阅（ProvidersPanel）
+
+> 约束：所有颜色/圆角/阴影使用 `src/renderer/styles.css` 中的 token 或 `oklch(from ...)` 派生；图表统一使用 SVG（禁止 canvas / recharts）。
+
+灵感：Multica 用量仪表盘本地切片——按天趋势 + 多维汇总 + 近期明细；数据来自 pi `get_session_stats`，主进程 `usage-store.summarize()` 聚合后经 `usage:summary` IPC 下发。
+
+##### UsagePanel（用量仪表盘）
+
+**落地文件**：`src/renderer/components/UsagePanel.tsx`（面板壳 + 表格 + 筛选）+ `src/renderer/components/usage/UsageCharts.tsx`（SVG 图表 + `fmtTokens` / `fmtCost`）。
+
+**信息架构**（自上而下滚动，各区块 `.usage-section` 间距 24px）：
+
+```
+.usage-panel
+├── .usage-header              仅 h2 + .usage-subtitle（全宽，不塞筛选）
+├── .usage-toolbar             横排筛选：天数 · 项目 · Provider · Agent | 清空
+├── .usage-kpi-primary         3 张主 KPI：总 Token · 总费用 · 会话次数
+├── .usage-kpi-secondary       4 张次 KPI：均次费用 · 均次 Token · Cache · 命中率
+├── section「按天」             .usage-section-head + .usage-legend | .usage-grid-2
+│   ├── StackedDailyTokenChart  Token 堆叠柱（左）
+│   └── DailyCostChart          费用面积折线（右）
+├── section「费用排行」         .usage-grid-2：按模型 | 按 Agent；整区无数据时单一空态
+├── section「按 Issue」         .usage-table（可点击 Issue key；列多，不并入排行条图）
+├── section「按模型（完整）」    .usage-table（含 Cache + Cost%）
+└── section「近期会话」         .usage-table（最多 50 条）
+```
+
+**根容器、Header 与 Toolbar**
+
+- 根：`.usage-panel` — `flex:1; overflow:auto; padding:24px 28px 40px`
+- Header：`.usage-header` — **仅**标题区（`h2` 18px/600 + `p.usage-subtitle` 12px muted）；`margin-bottom:12px`
+- Toolbar：`.usage-toolbar` — `display:flex; flex-wrap:wrap; gap:8px; align-items:center`；`margin-bottom:20px`
+  - 控件复用 `.form-input` + `.btn`；顺序固定为 **天数 → 项目 → Provider → Agent → 清空**
+  - 工具栏内 `.form-input` **必须覆盖为 `width:auto`**（全局 `.form-input` 为 `width:100%`，若不覆盖会竖排成塔）
+  - `min-width`：天数 ~110px；项目 / Provider / Agent ~140px
+  - 「清空」：`.usage-toolbar-clear` 用 `margin-left:auto` 靠右；`.btn` + `confirm`；成功后 `setNotice`
+  - 天数：7 / 30 / 90（本地日窗口）
+  - 项目：`projectId`（经 issue 归属过滤）
+  - Provider：来自 `summary.byProvider`
+  - Agent：来自 `agentAPI.list`；`__none__` = 未绑定 agent 的会话
+- **禁止**把筛选塞进 `.usage-header` 右侧 `.form-actions`（会继承 `width:100%` 导致竖排）
+
+**KPI 区**（主次两行 → `.usage-kpi`）
+
+主行 `.usage-kpi-primary`（`grid` 三列等分；`gap:10px`；`margin-bottom:10px`）：
+
+| 标签 | 主值 | hint | 计算口径 |
+|---|---|---|---|
+| 总 Token | `fmtTokens(in+out)` | `in … / out …` | 不含 cache |
+| 总费用 | `fmtCost(costUsd)` | pi 回报 cost | `totals.costUsd` |
+| 会话次数 | 整数 | 含聊天与派活 | `totals.runCount` |
+
+次行 `.usage-kpi-secondary`（`grid` 四列；`gap:10px`；`margin-bottom:20px`）：
+
+| 标签 | 主值 | hint | 计算口径 |
+|---|---|---|---|
+| 均次费用 | `fmtCost` | cost / runs | `costUsd / runCount` |
+| 均次 Token | `fmtTokens` | avg token | `(in+out) / runCount` |
+| Cache | `fmtTokens(r+w)` | `r … / w …` | cacheRead + cacheWrite |
+| Cache 命中率 | `—` 或 `xx.x%` | r/(in+r) | 分母为 0 显示 `—` |
+
+- 主行主值：`.usage-kpi-value.tabular`（22px / 600）
+- 次行：卡片 padding 略紧；主值 16–18px，视觉权重低于主行
+- 标签：`.usage-kpi-label`（11px secondary）；hint：`.usage-kpi-hint`（11px tertiary）
+- 卡片：`0.5px solid var(--border-primary)` + `var(--bg-secondary)` + `var(--radius-md)`
+- 窄屏（`max-width:980px`）：主行可 `auto-fit`；次行 `auto-fit minmax(120px,1fr)`
+
+**数值格式化**（`UsageCharts.tsx` 导出，表格与图表共用）
+
+- `fmtTokens`：`≥1M` → `x.xM`；`≥1k` → `x.xk`；否则整数
+- `fmtCost`：`≥$10` 两位；`≥$0.01` 三位；`>0` 四位；零为 `$0`
+- 表格数字列统一加 `.tabular`；占比列显示 `xx.x%`，总额为 0 时 `—`
+
+**图表区（SVG）**
+
+双列：`.usage-grid-2`（`repeat(2, minmax(0,1fr))`；`max-width:980px` 以下单列）。图表在列内吃满宽度。
+
+| 元素 | 类名 | 色源 token |
+|---|---|---|
+| 外层 SVG | `.usage-chart` | `role="img"`；`width:100%`（无 `max-width` 上限） |
+| 网格线 | `.usage-chart-grid` | `stroke: var(--border-primary)` |
+| Y 轴刻度 | `.usage-chart-axis` | `fill: var(--text-tertiary)`；9px |
+| X 轴日期 | `.usage-chart-label` | `fill: var(--text-secondary)`；9px；稀疏显示 |
+| In 段 | `.usage-chart-seg-in` | `oklch(from var(--accent-blue) … / 0.42)` |
+| Out 段 | `.usage-chart-seg-out` | `oklch(from var(--accent-green) … / 0.42)` |
+| Cache R | `.usage-chart-seg-cache-r` | `oklch(from var(--accent-yellow) … / 0.42)` |
+| Cache W | `.usage-chart-seg-cache-w` | `oklch(from var(--accent-purple) … / 0.42)` |
+| 费用折线 | `.usage-chart-line` | `stroke: var(--accent-yellow)` |
+| 费用面积 | `.usage-chart-cost-area` | yellow / 0.18 |
+| 费用点 | `.usage-chart-dot` | `fill: var(--accent-yellow)` |
+| 排行条 | `.usage-rank-bar` | yellow / 0.5 |
+
+图例（`.usage-legend`，位于「按天」区块 `.usage-section-head` 右侧）：
+
+- `.usage-legend-seg-in` / `-out` / `-cache-r` / `-cache-w` — 色块 `::before` 与堆叠柱一一对应
+- `.usage-legend-line` — Cost 折线色（2px 横条）
+
+图表交互：柱/点/条用 SVG `<title>` 提供 hover 明细；**禁止**在 JS 写死 `oklch()` 或 `fill` 色值。
+
+**表格区**（`.usage-table`）
+
+- 12px；`th` secondary / 500；`td` 底边 `0.5px var(--border-primary)`
+- 第二列（标题/Model）`max-width:220px` + 省略号 + `title` 全文
+- Issue key / 近期会话 Issue 列：`.btn.btn-sm` 跳转 → `setPanel("chat")` + `setActiveIssue` + `setViewMode("list")`（对齐 InboxPanel）
+- 无关联 Issue 显示 `—`；未绑定 Agent 显示 `(未指定)`
+
+**空态与加载**
+
+- 首屏加载：`.usage-empty`「加载中…」（`loading && !summary`）
+- **费用排行**：`byModel` 与 `byAgent` 皆空时，整区一条 `.usage-empty`（「暂无数据。完成一次会话后会出现在这里。」）；一侧有数据时仍双列，空侧保留短空态
+- 其他区块无数据：独立 `.usage-empty`（Issue / 模型完整表 / 近期会话分开提示）
+- 加载失败：根级「无法加载用量」
+
+**禁止事项**
+
+- 禁止 canvas / 第三方图表库
+- 禁止在组件内写死颜色（走 CSS 类 + token）
+- 禁止 Token 与 Cost 共用同一 Y 轴（已拆为左右双图）
+- KPI / 表格不要用 emoji 装饰
+- 筛选不得放进会继承 `width:100%` 的块级表单列而不覆盖宽度（须用 `.usage-toolbar` + `width:auto`）
+
+##### ProvidersPanel（订阅 Profile）
+
+- 根容器：`.providers-panel`
+- Header：`.providers-header`（左标题 + 右操作；与用量的「标题 / 工具栏分离」不同）
+- 列表：`.providers-list`（flex column + gap；无序列表去点）
+- 订阅卡片：`.providers-card`
+  - 默认：边框 `0.5px solid var(--border-primary)`；背景 `var(--bg-secondary)`
+  - 启用态：`.providers-card.is-active`（强调边框与细框阴影，所有颜色由 CSS 类/ token 控制，不在 JS 写死）
+- 卡片操作区：`.providers-card-actions`（flex wrap；按钮复用 `.btn` / `.btn-primary` / `.btn-sm`）
+- 编辑弹窗：
+  - 遮罩：`.providers-modal-backdrop`（fixed + 半透明 overlay）
+  - 弹窗：`.providers-modal`（`--bg-primary` + `--shadow-lg`；统一圆角与边框）
+
+##### TaskHistory（显示单次用量）
+
+- 用量行：`.task-history-usage`（仅在 `t.usage` 存在时渲染；颜色/字号由 token 决定）
+
 ## 九、动效
 
 - `prefers-reduced-motion: reduce` 时全局动画降到 0.01ms（媒体查询）。
@@ -356,7 +494,8 @@ hover / focus / active 高亮**不另设 token**，用 `oklch(from var(--x) l c 
 ```ts
 type PanelKind =
   | "chat" | "agents" | "plugins" | "settings"
-  | "squads" | "autopilots" | "inbox";
+  | "squads" | "autopilots" | "inbox"
+  | "projects" | "usage" | "providers";
 
 // chat 下另有 viewMode: "kanban" | "list" | "session"
 ```
@@ -368,7 +507,7 @@ type PanelKind =
 | `chat` + `kanban` | KanbanPanel |
 | `chat` + `list` | IssueDetail |
 | `chat` + `session` | MessageList + Composer |
-| `agents` / `plugins` / `squads` / `autopilots` / `inbox` / `settings` | 对应面板 |
+| `agents` / `plugins` / `providers` / `usage` / `squads` / `autopilots` / `inbox` / `settings` | 对应面板 |
 
 迁移：`setActive(id)` 保留为薄壳，自动根据 id 类型路由（`__plugins__` → `setPanel("plugins")`，真实会话 id → `setSession(id)`，persisted id → `setPersistedSession(id)`）。
 

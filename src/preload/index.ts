@@ -31,6 +31,12 @@ import {
   type InboxItem,
   type Project,
   type ProjectCreateInput,
+  type UsageSummaryQuery,
+  type UsageSummaryResult,
+  type UsageRecord,
+  type ProviderListResult,
+  type ProviderProfilePublic,
+  type ProviderProfileUpsertInput,
 } from "../shared/types";
 
 /** 包装 ipcRenderer.on，返回取消订阅函数（供 React useEffect 清理）。 */
@@ -340,6 +346,43 @@ const projectAPI = {
 
 contextBridge.exposeInMainWorld("projectAPI", projectAPI);
 
+const usageAPI = {
+  summary: (query?: UsageSummaryQuery): Promise<UsageSummaryResult> =>
+    ipcRenderer.invoke(IPC.usageSummary, query ?? {}),
+  byIssue: (issueId: string): Promise<UsageRecord[]> =>
+    ipcRenderer.invoke(IPC.usageByIssue, issueId),
+  clear: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(IPC.usageClear),
+  onChanged: (cb: () => void) =>
+    subscribe<unknown>(IPC.usageChanged, () => cb()),
+};
+
+const providerAPI = {
+  list: (): Promise<ProviderListResult> =>
+    ipcRenderer.invoke(IPC.providerList),
+  upsert: (
+    input: ProviderProfileUpsertInput
+  ): Promise<IpcResult<{ profile: ProviderProfilePublic }>> =>
+    ipcRenderer.invoke(IPC.providerUpsert, input),
+  delete: (id: string): Promise<IpcResult<Record<string, never>>> =>
+    ipcRenderer.invoke(IPC.providerDelete, id),
+  activate: (
+    id: string
+  ): Promise<IpcResult<{ profile: ProviderProfilePublic }>> =>
+    ipcRenderer.invoke(IPC.providerActivate, id),
+  getSecret: (
+    id: string
+  ): Promise<IpcResult<{ apiKey: string }>> =>
+    ipcRenderer.invoke(IPC.providerGetSecret, id),
+  importFromAuth: (): Promise<
+    IpcResult<{ imported: number; profiles: ProviderProfilePublic[] }>
+  > => ipcRenderer.invoke(IPC.providerImportFromAuth),
+  onChanged: (cb: (p: ProviderListResult) => void) =>
+    subscribe<ProviderListResult>(IPC.providerChanged, cb),
+};
+
+contextBridge.exposeInMainWorld("usageAPI", usageAPI);
+contextBridge.exposeInMainWorld("providerAPI", providerAPI);
+
 export type SessionAPI = typeof sessionAPI;
 export type AppAPI = typeof appAPI;
 export type PluginAPI = typeof pluginAPI;
@@ -349,3 +392,5 @@ export type SquadAPI = typeof squadAPI;
 export type AutopilotAPI = typeof autopilotAPI;
 export type InboxAPI = typeof inboxAPI;
 export type ProjectAPI = typeof projectAPI;
+export type UsageAPI = typeof usageAPI;
+export type ProviderAPI = typeof providerAPI;

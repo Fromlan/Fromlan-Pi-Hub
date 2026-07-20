@@ -12,6 +12,8 @@ import {
   Timer,
   Inbox,
   FolderKanban,
+  BarChart3,
+  KeyRound,
 } from "lucide-react";
 
 export function IconRail() {
@@ -78,6 +80,22 @@ export function IconRail() {
           aria-label={`${PANEL_LABEL.plugins}面板`}
         >
           <Plug size={16} />
+        </button>
+        <button
+          className={`iconrail-btn${activePanel === "providers" ? " iconrail-btn-active" : ""}`}
+          onClick={() => setPanel("providers")}
+          title={PANEL_TOOLTIP.providers}
+          aria-label={`${PANEL_LABEL.providers}面板`}
+        >
+          <KeyRound size={16} />
+        </button>
+        <button
+          className={`iconrail-btn${activePanel === "usage" ? " iconrail-btn-active" : ""}`}
+          onClick={() => setPanel("usage")}
+          title={PANEL_TOOLTIP.usage}
+          aria-label={`${PANEL_LABEL.usage}面板`}
+        >
+          <BarChart3 size={16} />
         </button>
         <button
           className={`iconrail-btn${activePanel === "autopilots" ? " iconrail-btn-active" : ""}`}

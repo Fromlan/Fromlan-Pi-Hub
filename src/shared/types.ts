@@ -108,6 +108,19 @@ export const IPC = {
   inboxChanged: "inbox:changed",
   // Skill zip
   pluginImportSkillZip: "plugin:importSkillZip",
+  // Usage（token / cost 用量）
+  usageSummary: "usage:summary",
+  usageByIssue: "usage:byIssue",
+  usageClear: "usage:clear",
+  usageChanged: "usage:changed",
+  // Provider 订阅 Profile（写回 ~/.pi/agent/auth.json）
+  providerList: "provider:list",
+  providerUpsert: "provider:upsert",
+  providerDelete: "provider:delete",
+  providerActivate: "provider:activate",
+  providerGetSecret: "provider:getSecret",
+  providerImportFromAuth: "provider:importFromAuth",
+  providerChanged: "provider:changed",
 } as const;
 
 /** 插件类型字面量：限定到 ~\/.pi/agent/ 下的三个白名单子目录。 */
@@ -158,7 +171,9 @@ export type PanelKind =
   | "squads"
   | "autopilots"
   | "inbox"
-  | "projects";
+  | "projects"
+  | "usage"
+  | "providers";
 
 /** 成功派活后从摘要提炼 Skill 的模式。 */
 export type SkillExtractMode = "off" | "propose" | "auto";
@@ -556,6 +571,8 @@ export interface Task {
    * 有值时 onSessionCompleted 不再盲目 in_progress → in_review。
    */
   agentStatusOverride?: IssueStatus;
+  /** 会话结束时从 get_session_stats 回写的用量摘要。 */
+  usage?: TaskUsageSnapshot;
   /** 人类可读错误摘要（展示用）。 */
   error?: string;
   errorInfo?: TaskErrorInfo;
@@ -564,6 +581,162 @@ export interface Task {
   runningAt?: number;
   createdAt: number;
   finishedAt?: number;
+}
+
+/** Task / UsageRecord 共用的 token 用量切片。 */
+export interface TaskUsageSnapshot {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}
+
+/** 单次会话用量记录（持久化于 usage-records.jsonl）。 */
+export interface UsageRecord {
+  id: string;
+  sessionId?: string;
+  taskId?: string;
+  issueId?: string;
+  agentName?: string;
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  createdAt: number;
+}
+
+/** 按日汇总点（缺天补 0）。 */
+export interface UsageDailyPoint {
+  /** YYYY-MM-DD（本地日） */
+  date: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  runCount: number;
+}
+
+/** 按 provider+model 汇总行。 */
+export interface UsageModelRow {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  runCount: number;
+}
+
+export interface UsageAgentRow extends TaskUsageSnapshot {
+  agentName: string;
+  runCount: number;
+}
+
+export interface UsageProviderRow extends TaskUsageSnapshot {
+  provider: string;
+  runCount: number;
+}
+
+export interface UsageIssueRow extends TaskUsageSnapshot {
+  issueId: string;
+  issueKey: string;
+  issueTitle: string;
+  projectId?: string;
+  projectName?: string;
+  runCount: number;
+}
+
+export interface UsageRecentRow extends UsageRecord {
+  issueKey?: string;
+  issueTitle?: string;
+  projectName?: string;
+}
+
+export interface UsageSummaryQuery {
+  days?: number;
+  projectId?: string;
+  provider?: string;
+  /**
+   * 用于过滤：会话中 agentName（默认空表示未指定 agent）。
+   * 约定：前端传入 "__none__" 用于表示 "未指定 agentName"。
+   */
+  agentName?: string;
+}
+
+export interface UsageSummaryResult {
+  days: number;
+  projectId?: string;
+  provider?: string;
+  agentName?: string;
+  daily: UsageDailyPoint[];
+  byModel: UsageModelRow[];
+  byAgent: UsageAgentRow[];
+  byProvider: UsageProviderRow[];
+  byIssue: UsageIssueRow[];
+  recent: UsageRecentRow[];
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    costUsd: number;
+    runCount: number;
+  };
+}
+
+export type ProviderAuthType = "api_key" | "oauth_placeholder";
+
+/** Hub 侧订阅 Profile（落盘含明文 key；IPC 列表用 Public 视图）。 */
+export interface ProviderProfile {
+  id: string;
+  name: string;
+  /** 写入 auth.json 的 provider 键名（如 anthropic / openrouter）。 */
+  providerId: string;
+  authType: ProviderAuthType;
+  apiKey?: string;
+  /** 可选：写入 models.json 的 baseUrl（自定义网关）。 */
+  baseUrl?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 列表/事件用：不回传明文 key。 */
+export interface ProviderProfilePublic {
+  id: string;
+  name: string;
+  providerId: string;
+  authType: ProviderAuthType;
+  hasKey: boolean;
+  /** 末 4 位掩码，无 key 时为空。 */
+  keyMask: string;
+  baseUrl?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+  active: boolean;
+}
+
+export interface ProviderProfileUpsertInput {
+  id?: string;
+  name: string;
+  providerId: string;
+  authType?: ProviderAuthType;
+  /** 留空且已有 id = 保留原 key。 */
+  apiKey?: string;
+  baseUrl?: string;
+  notes?: string;
+}
+
+export interface ProviderListResult {
+  profiles: ProviderProfilePublic[];
+  activeProfileId: string | null;
 }
 
 /** issue:rerun 可选覆盖。 */

@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-Fromlan Pi Hub 是一个 Electron 桌面客户端，**不内置 pi，也不管理 API 密钥**。它通过图形界面启动多个独立的 `pi --mode rpc` 子进程（每个会话一个），通过 JSONL 协议通信。
+Fromlan Pi Hub 是一个 Electron 桌面客户端，**不内置 pi**。可通过「订阅」面板管理多套 Provider Profile（含 API key），一键激活时原子写入 `~/.pi/agent/auth.json`（可选同步 `models.json`）；也可用 pi CLI `/login`。子进程仍**不透传**父进程环境变量中的密钥。通过图形界面启动多个独立的 `pi --mode rpc` 子进程（每个会话一个），通过 JSONL 协议通信。
 
-产品定位：**Windows 上的 Multica 本地单机版** —— Kanban 派活、Project 分组、Task 可靠性（含毒化 resume）、Squad 路由、Autopilot、Inbox、Skill 复利、Agent `hub_*` 主动协作；聊天为执行日志。只服务 pi，纯本地，无云。
+产品定位：**Windows 上的 Multica 本地单机版** —— Kanban 派活、Project 分组、Task 可靠性（含毒化 resume）、Squad 路由、Autopilot、Inbox、Skill 复利、Agent `hub_*` 主动协作、用量按天聚合、订阅切换；聊天为执行日志。只服务 pi，纯本地，无云。
 
-前置依赖：全局安装 `pi`（≥ 0.80.6）且至少配置一个 provider（写入 `~/.pi/agent/auth.json`）。
+前置依赖：全局安装 `pi`（≥ 0.80.6）且至少配置一个 provider（`~/.pi/agent/auth.json`，可由 Hub「订阅」写入）。
 
 ## 常用命令
 
@@ -56,13 +56,14 @@ git push origin v0.9.2
 App / IconRail / Sidebar /               ipcMain.handle                    pi --mode rpc
 KanbanPanel / IssueDetail /        ←→    SessionManager ─── PiRpcClient ──→ stdin/stdout
 Squads / Projects / Autopilots /          issue-runner + task-monitor       (JSONL 协议)
-Inbox / Composer / MessageList /          broadcast 事件 →
-store.applyEvent 增量拼流                plugin/agent/squad/project/
-store.setIssues / setTasks               autopilot/inbox/settings stores + persistence
+Usage / Providers / Inbox /               broadcast 事件 →
+Composer / MessageList /                  plugin/agent/squad/project/
+store.applyEvent 增量拼流                autopilot/inbox/settings/
+store.setIssues / setTasks               usage/provider stores + persistence
                                          (env 白名单 + path/symlink 守卫)
 ```
 
-**导航状态**：`activePanel`（chat | agents | plugins | settings | squads | projects | autopilots | inbox）+ `viewMode`（kanban | list | session）+ `activeSessionId` / `activePersistedId` / `activeIssueId` / `projectFilterId`。
+**导航状态**：`activePanel`（chat | agents | plugins | settings | squads | projects | autopilots | inbox | usage | providers）+ `viewMode`（kanban | list | session）+ `activeSessionId` / `activePersistedId` / `activeIssueId` / `projectFilterId`。
 
 **派活数据流**（Issue Assign / mention / cron）：
 1. UI 或 Autopilot → `issueAPI` / 主进程钩子 → `issue-runner.maybeEnqueue` / `enqueueForAgent`
@@ -107,18 +108,22 @@ src/
 │   ├── inbox-store.ts         # inbox.json（仅人侧）
 │   ├── notification.ts        # Electron Notification + 节流
 │   ├── settings-store.ts      # settings.json（派活默认 / 超时 / Skill 提炼 / 通知）
+│   ├── usage-store.ts         # usage-records.jsonl（会话 token/cost）
+│   ├── provider-profile-store.ts # 订阅 Profile + 写回 auth.json
 │   ├── plugin-manager.ts      # ~/.pi/agent/ CRUD + Skill zip 导入
 │   ├── agent-manager.ts       # ~/.pi/agents/<name>/ CRUD
 │   ├── agents-store.ts        # agent 元数据
 │   └── persistence.ts         # session 历史 + getBaseDir()
 ├── preload/index.ts           # sessionAPI / appAPI / pluginAPI / agentAPI /
-│                              # issueAPI / projectAPI / squadAPI / autopilotAPI / inboxAPI
+│                              # issueAPI / projectAPI / squadAPI / autopilotAPI /
+│                              # inboxAPI / usageAPI / providerAPI
 └── renderer/
     ├── App.tsx                # 按 activePanel + viewMode 路由
     ├── store.ts               # zustand：sessions / issues / tasks / projects / squads / …
     ├── styles.css             # 设计系统 tokens（OKLCH）
     └── components/
-        ├── IconRail.tsx       # 看板 / Projects / Agents / Squads / Plugins / Autopilots / Inbox / 设置
+        ├── IconRail.tsx       # 看板 / Projects / Agents / Squads / Plugins / 订阅 / 用量 / …
+        ├── UsagePanel.tsx / ProvidersPanel.tsx
         ├── KanbanPanel.tsx / IssueCard.tsx / IssueDetail.tsx
         ├── PriorityIcon.tsx / IssueStatusIcon.tsx / ActorAvatar.tsx
         ├── TaskHistory.tsx / MentionPicker.tsx
@@ -129,7 +134,7 @@ src/
         └── MessageList / Composer / SessionCard / …
 ```
 
-持久化根目录：`{userData}/fromlan-pi-hub/`（issues / comments / tasks / squads / projects / autopilots / inbox / settings / sessions / messages / bundled-extensions）。
+持久化根目录：`{userData}/fromlan-pi-hub/`（issues / comments / tasks / squads / projects / autopilots / inbox / settings / sessions / messages / usage-records / provider-profiles / bundled-extensions）。
 
 ## 关键实现细节（修改前必读）
 
@@ -146,7 +151,13 @@ src/
 `PiRpcClient` 在 stdout 超限 / child.on('error') 时会 emit `error`。主进程 `SessionManager` 必须订阅，否则 EventEmitter 默认在无 error 监听时抛未捕获异常带崩主进程。
 
 ### env 白名单（critical）
-`PiRpcClient.spawn` **不再透传父进程 env**（早期版本曾 spread `...process.env`，会把 shell 中的 `*_API_KEY` 注入子进程）。改为白名单：仅 `PATH/PATHEXT/SYSTEMROOT/TEMP/TMP/HOME/USERPROFILE/HOMEDRIVE/HOMEPATH/LANG/LC_ALL/TZ` + `opts.env`（仍会二次剔除 `*API_KEY*/*SECRET*/*TOKEN*`）+ 强制 `NO_COLOR=1`、`FORCE_COLOR=0`。API key 由 pi 自身从 `~/.pi/agent/auth.json` 读。Hub Issue 桥使用 `FROMLAN_HUB_BRIDGE_KEY`（避免键名含 TOKEN 被剔除）。
+`PiRpcClient.spawn` **不再透传父进程 env**（早期版本曾 spread `...process.env`，会把 shell 中的 `*_API_KEY` 注入子进程）。改为白名单：仅 `PATH/PATHEXT/SYSTEMROOT/TEMP/TMP/HOME/USERPROFILE/HOMEDRIVE/HOMEPATH/LANG/LC_ALL/TZ` + `opts.env`（仍会二次剔除 `*API_KEY*/*SECRET*/*TOKEN*`）+ 强制 `NO_COLOR=1`、`FORCE_COLOR=0`。API key 由 pi 从 `~/.pi/agent/auth.json` 读（可由 Hub「订阅」面板写入，但不经环境变量注入子进程）。Hub Issue 桥使用 `FROMLAN_HUB_BRIDGE_KEY`（避免键名含 TOKEN 被剔除）。
+
+### 用量采集
+会话 `agent_end` / `kill` 前调用 pi `get_session_stats`，写入 `{userData}/fromlan-pi-hub/usage-records.jsonl`（同一 session 只记一次累计快照）。「用量」面板按天聚合；Task 可带 `usage` 字段。
+
+### 订阅 Profile
+`provider-profile-store` 落盘 Hub 侧 Profile（含 key）；**启用**时原子写 `~/.pi/agent/auth.json`，可选合并 `models.json` 的 `baseUrl`。列表 IPC 不回传明文 key（`getSecret` 编辑时按需）。OAuth 仅导入占位，登录仍走 pi `/login`。
 
 ### abort 必须 fire-and-forget
 pi 的 `abort` 命令不发 response，所以 `SessionManager.abort` 用 `sendFireAndForget` 而非 `send`。否则在流式运行中按"中止"会留一个永久 pending request。
@@ -204,6 +215,8 @@ Issue UI 约定：卡片主结构为 PriorityIcon+Key → 标题 →（可选项
 - `projects` → ProjectsPanel（Issue 分组；可选 defaultCwd）
 - `agents` → AgentsPanel
 - `plugins` → PluginsPanel（含 Skill zip 导入）
+- `providers` → ProvidersPanel（订阅 Profile / 写 auth.json）
+- `usage` → UsagePanel（按天 token/cost）
 - `squads` → SquadsPanel
 - `autopilots` → AutopilotsPanel
 - `inbox` → InboxPanel

@@ -7,6 +7,8 @@ import { PiRpcClient } from "./pi-rpc-client";
 import * as persistence from "./persistence";
 import { getBridgeEnv, isBridgeRunning } from "./hub-agent-bridge";
 import { ensureHubIssueExtensionPath } from "./hub-issue-extension";
+import * as usageStore from "./usage-store";
+import * as taskStore from "./task-store";
 import type {
   SessionSnapshot,
   SessionStatus,
@@ -56,6 +58,8 @@ interface ManagedSession {
   lastAssistantText: string;
   /** 最近一条 thinking（无 text 时回退用）。 */
   lastAssistantThinking: string;
+  /** 是否已采集过本会话用量（避免重复）。 */
+  usageCaptured?: boolean;
 }
 
 /**
@@ -183,6 +187,7 @@ export class SessionManager extends EventEmitter {
   async kill(id: string): Promise<void> {
     const session = this.sessions.get(id);
     if (!session) return;
+    await this.captureUsage(session);
     // 先通知 runner（再删 map），避免 exit 回调跳过失败回写
     if (session.issueId) {
       this.emit("issue-session-failed", {
@@ -318,31 +323,35 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  /** 拉取可用模型列表（get_available_models）。若无 session 则临时起一个探测进程。 */
+  /** 拉取可用模型列表（get_available_models）。若无 session 则临时起探测进程并合并全部 provider。 */
   async getModels(id?: string): Promise<ModelInfo[]> {
     const existing = id ? this.sessions.get(id) : undefined;
     if (existing) {
       return this.queryModels(existing.client);
     }
-    // 临时探测进程：从 pi 自带的 auth.json 读已配置的 provider，
-    // 逐个尝试拉取模型列表；任何一个成功即返回（避免依赖硬编码 provider）。
     const providers = readConfiguredProviders();
+    const merged: ModelInfo[] = [];
+    const seen = new Set<string>();
     for (const provider of providers) {
       const probe = new PiRpcClient({ provider, model: "*", noSession: true });
       probe.on("error", (err) => {
-        // 必须订阅 error 事件，防止 EventEmitter 在无监听器时抛未捕获异常带崩主进程
         console.error(`[pi-rpc probe ${provider}] error:`, err);
       });
       try {
         const models = await this.queryModels(probe);
-        if (models.length > 0) return models;
+        for (const m of models) {
+          const key = `${m.provider}\0${m.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(m);
+        }
       } catch {
         // 该 provider 起不来或无模型，尝试下一个
       } finally {
         await probe.close();
       }
     }
-    return [];
+    return merged;
   }
 
   private async queryModels(client: PiRpcClient): Promise<ModelInfo[]> {
@@ -437,17 +446,20 @@ export class SessionManager extends EventEmitter {
         break;
       case "agent_end":
         session.status = "idle";
-        // 仅 agent_end 视为整次派活结束（避免 mid-run settled 导致空摘要 + 会话仍在跑）
-        if (session.issueId && session.sawBusy) {
-          const summary =
-            session.lastAssistantText.trim() ||
-            session.lastAssistantThinking.trim();
-          this.emit("issue-session-completed", {
-            sessionId: id,
-            summary,
-          });
-          session.sawBusy = false;
-        }
+        // 先采用量再完成 task，避免 getTaskBySession 找不到 running task
+        void (async () => {
+          await this.captureUsage(session);
+          if (session.issueId && session.sawBusy) {
+            const summary =
+              session.lastAssistantText.trim() ||
+              session.lastAssistantThinking.trim();
+            this.emit("issue-session-completed", {
+              sessionId: id,
+              summary,
+            });
+            session.sawBusy = false;
+          }
+        })();
         break;
       case "turn_end":
         // 多 turn 循环中途：只标 idle，不完成 task
@@ -478,6 +490,52 @@ export class SessionManager extends EventEmitter {
     session.lastActivityAt = Date.now();
     this.emit("event", { sessionId: id, event });
     this.emit("change", this.toSnapshot(session));
+  }
+
+  /**
+   * 从 pi get_session_stats 采集会话累计用量；同一 session 只成功写入一次。
+   * 失败静默，不阻断派活完成路径。
+   */
+  private async captureUsage(session: ManagedSession): Promise<void> {
+    if (session.usageCaptured || session.client.isClosed) return;
+    try {
+      const data = await session.client.send<unknown>(
+        { type: "get_session_stats" },
+        undefined,
+        8_000
+      );
+      const parsed = usageStore.parseSessionStats(data);
+      if (!parsed) {
+        session.usageCaptured = true;
+        return;
+      }
+      const task =
+        taskStore.getTaskBySession(session.id) ??
+        taskStore.findTaskBySessionId(session.id);
+      const record = usageStore.appendRecord({
+        sessionId: session.id,
+        taskId: task?.id,
+        issueId: session.issueId ?? task?.issueId,
+        agentName: session.agentName ?? task?.agentName,
+        provider: session.provider,
+        model: session.model,
+        ...parsed,
+      });
+      session.usageCaptured = true;
+      if (record && task) {
+        const snap = usageStore.toTaskUsageSnapshot(record);
+        const updated = taskStore.updateTask(task.id, { usage: snap });
+        if (updated) {
+          this.emit("usage-task-updated", updated);
+        }
+      }
+      if (record) {
+        this.emit("usage-recorded", record);
+      }
+    } catch (e) {
+      console.error(`[session ${session.id}] get_session_stats failed:`, e);
+      // 不设 usageCaptured，允许 kill 时再试一次；但若进程已死则无所谓
+    }
   }
 
   private toSnapshot(s: ManagedSession): SessionSnapshot {

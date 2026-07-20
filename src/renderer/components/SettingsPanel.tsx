@@ -222,7 +222,24 @@ export function SettingsPanel() {
         <h3>关于</h3>
         <p className="settings-about">
           Fromlan Pi Hub —— 本地 pi Agent 工位台。Kanban 派活、Squad 路由、Autopilot
-          调度；API 密钥由 pi 自身管理。
+          调度。订阅密钥可在「订阅」面板管理并写入 ~/.pi/agent/auth.json；用量见「用量」面板。
+          子进程仍不透传环境变量中的 API Key。
+        </p>
+        <p className="settings-row-hint">
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => useStore.getState().setPanel("providers")}
+          >
+            打开订阅
+          </button>{" "}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => useStore.getState().setPanel("usage")}
+          >
+            打开用量
+          </button>
         </p>
       </section>
     </div>
