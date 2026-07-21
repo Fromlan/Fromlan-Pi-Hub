@@ -1,4 +1,16 @@
-import { promises as fsp, existsSync, lstatSync, realpathSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import {
+  promises as fsp,
+  closeSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  realpathSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { join, sep } from "path";
 import { homedir } from "os";
 import * as agentsStore from "./agents-store";
@@ -83,7 +95,8 @@ function resolveItemPath(name: string, type: PluginType, item: string): string {
   return join(typeDir(name, type), `${item}${EXT_BY_TYPE[type]}`);
 }
 
-function validateAgentName(name: string): string | null {
+/** Agent 名称合法性校验。返回 null 表示通过；返回字符串为可向用户展示的错误原因。 */
+export function validateAgentName(name: string): string | null {
   if (!name || typeof name !== "string") return "名称不能为空";
   if (name.includes("/") || name.includes("\\") || name.includes("..")) {
     return "名称包含非法字符";
@@ -93,6 +106,17 @@ function validateAgentName(name: string): string | null {
   }
   if (name.length > 32) return "名称过长（>32）";
   return null;
+}
+
+/** Agent 目录是否存在（即 ~/.pi/agents/&lt;name&gt;/ 是个目录）。仅做存在性检查，不解析 symlink 目标。 */
+export function agentExists(name: string): boolean {
+  const v = validateAgentName(name);
+  if (v) return false;
+  try {
+    return existsSync(agentDir(name));
+  } catch {
+    return false;
+  }
 }
 
 function validateItemName(type: PluginType, name: string): string | null {
@@ -450,7 +474,22 @@ export function createFile(name: string, type: PluginType, item: string, body?: 
         name: item,
         description: `${item} skill`,
       }) + `# ${item}\n\n描述此 skill 的工作流。\n`;
-    writeFileSync(skillPath, defaultBody, "utf8");
+    // O_EXCL 原子创建：若 SKILL.md 已存在则抛 EEXIST，被上层 uniqueSkillName 兜底加 -2 后缀。
+    // 不再依赖 existsSync + writeFileSync 的 TOCTOU 窗口。
+    let fd: number;
+    try {
+      fd = openSync(skillPath, "wx");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new Error(`已存在: ${item}`);
+      }
+      throw e;
+    }
+    try {
+      writeFileSync(fd, defaultBody, "utf8");
+    } finally {
+      closeSync(fd);
+    }
   } else {
     let defaultBody = body ?? "";
     if (type === "extensions" && !defaultBody) {

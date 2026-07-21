@@ -265,6 +265,8 @@ export class PiRpcClient extends EventEmitter {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     // 缓冲上限保护：超限说明子进程异常刷屏，丢弃缓冲并强制关闭，避免 OOM。
     if (this.buffer.length > MAX_BUFFER) {
+      // 立即封闭写入路径：send/sendFireAndForget 的 closed 守卫立刻拒绝后续 stdin。
+      this.closed = true;
       this.buffer = Buffer.alloc(0);
       const overflowErr = new Error("Pi stdout buffer overflow, killing process");
       this.emit("error", overflowErr);

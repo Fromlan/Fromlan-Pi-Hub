@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { join } from "path";
+import { join, resolve as resolvePath, sep } from "path";
 import { homedir } from "os";
-import { statSync } from "fs";
+import { realpathSync, statSync } from "fs";
 import { SessionManager } from "./session-manager";
 import * as pluginManager from "./plugin-manager";
 import * as agentManager from "./agent-manager";
@@ -264,9 +264,43 @@ ipcMain.handle(IPC.historyDelete, (_e, id: string) => {
 // ── App IPC ──
 ipcMain.handle(IPC.appGetModels, (_e, id?: string) => sessionManager.getModels(id));
 ipcMain.handle(IPC.appGetHomeDir, () => homedir());
-ipcMain.handle(IPC.appPathStat, (_e, p: string) => {
+
+/** 路径必须在用户主目录子树内（realpath 二次校验防 symlink 越界）。 */
+function assertSafeExplorerPath(p: string): { ok: true; resolved: string } | { ok: false; error: string } {
+  if (typeof p !== "string" || p.length === 0) {
+    return { ok: false, error: "路径不能为空" };
+  }
+  const abs = resolvePath(p);
+  const home = homedir().replace(/[\\/]+$/, "") + sep;
+  let real: string;
   try {
-    const s = statSync(p);
+    real = realpathSync(abs).replace(/[\\/]+$/, "") + sep;
+  } catch {
+    return { ok: false, error: "路径不存在或无法解析" };
+  }
+  if (real !== home && !real.startsWith(home)) {
+    return { ok: false, error: "路径必须在用户主目录下" };
+  }
+  return { ok: true, resolved: real.slice(0, -1) };
+}
+
+/** 扩展名黑名单：openInExplorer 用，阻止渲染端触发任意可执行关联程序。 */
+const EXPLORER_EXTS = new Set([
+  ".exe", ".bat", ".cmd", ".com", ".scr", ".vbs", ".vbe",
+  ".js", ".jse", ".wsf", ".jar", ".msi", ".lnk", ".ps1",
+]);
+
+function hasBlacklistedExt(p: string): boolean {
+  const dot = p.lastIndexOf(".");
+  if (dot < 0) return false;
+  return EXPLORER_EXTS.has(p.slice(dot).toLowerCase());
+}
+
+ipcMain.handle(IPC.appPathStat, (_e, p: string) => {
+  const guard = assertSafeExplorerPath(p);
+  if (!guard.ok) return guard;
+  try {
+    const s = statSync(guard.resolved);
     if (!s.isDirectory()) return { ok: false, error: "不是目录" };
     return { ok: true, isDirectory: true };
   } catch (e) {
@@ -278,8 +312,10 @@ ipcMain.handle(IPC.appPathStat, (_e, p: string) => {
 
 // 在系统文件管理器中显示路径（选中文件或打开文件夹）
 ipcMain.handle(IPC.appRevealInExplorer, async (_e, p: string) => {
+  const guard = assertSafeExplorerPath(p);
+  if (!guard.ok) return guard;
   try {
-    await shell.showItemInFolder(p);
+    await shell.showItemInFolder(guard.resolved);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -288,8 +324,13 @@ ipcMain.handle(IPC.appRevealInExplorer, async (_e, p: string) => {
 
 // 用系统默认应用打开路径（文件夹打开资源管理器，文件用默认编辑器）
 ipcMain.handle(IPC.appOpenInExplorer, async (_e, p: string) => {
+  const guard = assertSafeExplorerPath(p);
+  if (!guard.ok) return guard;
+  if (hasBlacklistedExt(guard.resolved)) {
+    return { ok: false, error: "该扩展名被禁止触发默认程序" };
+  }
   try {
-    await shell.openPath(p);
+    await shell.openPath(guard.resolved);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -494,12 +535,29 @@ ipcMain.handle(IPC.agentFileDelete, (_e, name: string, type: PluginType, file: s
 ipcMain.handle(IPC.issueList, () => issueStore.listIssues());
 ipcMain.handle(IPC.issueGet, (_e, id: string) => issueStore.getIssue(id) ?? null);
 
+/**
+ * 校验 assignee 引用合法性：squad 必须存在且未归档。
+ * 返回 null 表示通过；返回字符串为可向用户展示的错误原因。
+ */
+function assertAssigneeValid(assignee: Assignee | undefined): string | null {
+  if (!assignee) return null;
+  if (assignee.kind === "squad" && assignee.id) {
+    const squad = squadStore.getSquad(assignee.id);
+    if (!squad || squad.archived) {
+      return "不能派给已归档的小队";
+    }
+  }
+  return null;
+}
+
 ipcMain.handle(IPC.issueCreate, async (_e, input: IssueCreateInput) => {
   try {
     if (input.projectId) {
       const p = projectStore.getProject(input.projectId);
       if (!p) return { ok: false, error: "项目不存在" };
     }
+    const assigneeErr = assertAssigneeValid(input.assignee);
+    if (assigneeErr) return { ok: false, error: assigneeErr };
     const issue = issueStore.createIssue(input);
     broadcast(IPC.issueCreated, issue);
     // 创建时已指定 agent 且非 backlog → 自动派活
@@ -516,6 +574,11 @@ ipcMain.handle(
     if (patch.projectId !== undefined && patch.projectId !== null && patch.projectId !== "") {
       const p = projectStore.getProject(String(patch.projectId));
       if (!p) return { ok: false, error: "项目不存在" };
+    }
+    // assignee 合法性校验（与 issueCreate / issueAssign 对齐）
+    if (patch.assignee !== undefined) {
+      const assigneeErr = assertAssigneeValid(patch.assignee as Assignee | undefined);
+      if (assigneeErr) return { ok: false, error: assigneeErr };
     }
     const before = issueStore.getIssue(id);
     const normalized =
@@ -554,12 +617,8 @@ ipcMain.handle(IPC.issueDelete, (_e, id: string) => {
 ipcMain.handle(
   IPC.issueAssign,
   async (_e, { id, assignee }: { id: string; assignee: Assignee }) => {
-    if (assignee.kind === "squad" && assignee.id) {
-      const squad = squadStore.getSquad(assignee.id);
-      if (!squad || squad.archived) {
-        return { ok: false, error: "不能派给已归档的小队" };
-      }
-    }
+    const assigneeErr = assertAssigneeValid(assignee);
+    if (assigneeErr) return { ok: false, error: assigneeErr };
     const issue = issueStore.assignIssue(id, assignee);
     if (!issue) return { ok: false };
     broadcast(IPC.issueChanged, issue);
@@ -608,13 +667,12 @@ ipcMain.handle(
     >
   ) => {
     try {
-      const mentions =
-        input.mentions?.length > 0
-          ? input.mentions
-          : uniqueMentions(input.body).map((m) => ({
-              kind: m.kind,
-              id: m.id,
-            }));
+      // 安全：mentions 必须 server-side 从 body 重算，绝不信任渲染端入参。
+      // 旧版会被 input.mentions 覆盖 → 攻击者可伪造任意 agent / squad mention 触发派活。
+      const mentions = uniqueMentions(input.body).map((m) => ({
+        kind: m.kind,
+        id: m.id,
+      }));
       const c = issueStore.addComment({ ...input, mentions });
       broadcast(IPC.commentAdded, c);
       void issueRunner.handleCommentTriggers(c);
@@ -658,9 +716,25 @@ ipcMain.handle(IPC.squadDelete, (_e, id: string) => {
   if (!squad) return { ok: false, error: "Squad 不存在" };
   if (squad.archived) return { ok: false, error: "Squad 已归档" };
 
+  // 若 leader agent 不存在，转派无法落到合法 agent 上：跳过 assignee 写入并 inbox 通知人
+  const leaderExists = agentManager.agentExists(squad.leaderAgentName);
   let transferred = 0;
+  let unassigned = 0;
+
   for (const issue of issueStore.listIssues()) {
     if (issue.assignee.kind === "squad" && issue.assignee.id === id) {
+      if (!leaderExists) {
+        // 切回 unassigned（human default），让用户手动指派
+        const updated = issueStore.assignIssue(issue.id, {
+          kind: "human",
+          id: "default",
+        });
+        if (updated) {
+          broadcast(IPC.issueChanged, updated);
+          unassigned++;
+        }
+        continue;
+      }
       const updated = issueStore.assignIssue(issue.id, {
         kind: "agent",
         id: squad.leaderAgentName,
@@ -672,10 +746,19 @@ ipcMain.handle(IPC.squadDelete, (_e, id: string) => {
     }
   }
 
+  if (unassigned > 0) {
+    inboxStore.addInboxItem({
+      kind: "task_failed",
+      title: `归档 Squad「${squad.name}」`,
+      body: `Squad 归档后 leader agent「${squad.leaderAgentName}」不存在，${unassigned} 个 Issue 已转回未指派，请手动处理。`,
+    });
+    broadcast(IPC.inboxChanged, null);
+  }
+
   const archived = squadStore.updateSquad(id, { archived: true });
   if (!archived) return { ok: false, error: "归档失败" };
   broadcast(IPC.squadChanged, archived);
-  return { ok: true, transferred };
+  return { ok: true, transferred, unassigned };
 });
 
 // ── Project IPC ──
@@ -772,7 +855,7 @@ ipcMain.handle(IPC.inboxClear, () => {
 });
 
 // ── Usage IPC ──
-ipcMain.handle(IPC.usageSummary, (_e, query?: UsageSummaryQuery) =>
+ipcMain.handle(IPC.usageSummary, async (_e, query?: UsageSummaryQuery) =>
   usageStore.summarize(query ?? {})
 );
 ipcMain.handle(IPC.usageByIssue, (_e, issueId: string) =>
@@ -786,27 +869,27 @@ ipcMain.handle(IPC.usageClear, () => {
 
 // ── Provider Profile IPC ──
 ipcMain.handle(IPC.providerList, () => providerProfileStore.listProfiles());
-ipcMain.handle(IPC.providerUpsert, (_e, input: ProviderProfileUpsertInput) => {
+ipcMain.handle(IPC.providerUpsert, async (_e, input: ProviderProfileUpsertInput) => {
   try {
-    const profile = providerProfileStore.upsertProfile(input);
+    const profile = await providerProfileStore.upsertProfile(input);
     broadcast(IPC.providerChanged, providerProfileStore.listProfiles());
     return { ok: true, profile };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
 });
-ipcMain.handle(IPC.providerDelete, (_e, id: string) => {
+ipcMain.handle(IPC.providerDelete, async (_e, id: string) => {
   try {
-    providerProfileStore.deleteProfile(id);
+    await providerProfileStore.deleteProfile(id);
     broadcast(IPC.providerChanged, providerProfileStore.listProfiles());
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
 });
-ipcMain.handle(IPC.providerActivate, (_e, id: string) => {
+ipcMain.handle(IPC.providerActivate, async (_e, id: string) => {
   try {
-    const profile = providerProfileStore.activateProfile(id);
+    const profile = await providerProfileStore.activateProfile(id);
     // 同步 Hub 派活默认 provider
     const settings = settingsStore.updateSettings({
       defaultProvider: profile.providerId,
@@ -830,9 +913,9 @@ ipcMain.handle(IPC.providerGetSecret, (_e, id: string) => {
     return { ok: false, error: (e as Error).message };
   }
 });
-ipcMain.handle(IPC.providerImportFromAuth, () => {
+ipcMain.handle(IPC.providerImportFromAuth, async () => {
   try {
-    const r = providerProfileStore.importFromAuth();
+    const r = await providerProfileStore.importFromAuth();
     broadcast(IPC.providerChanged, providerProfileStore.listProfiles());
     return { ok: true, imported: r.imported, profiles: r.profiles };
   } catch (e) {

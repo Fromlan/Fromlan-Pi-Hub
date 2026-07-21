@@ -69,6 +69,22 @@ function save(): void {
   atomicWriteJson(STORE_FILE, data);
 }
 
+/**
+ * 进程内写串行链：避免并发 IPC handler 交错覆盖 profile 状态与 auth.json。
+ * 所有修改 data 的入口都包到 chain.then 中即可；纯读 (listProfiles/getSecret) 保持同步。
+ */
+let writeChain: Promise<unknown> = Promise.resolve();
+
+function enqueue<T>(fn: () => T): Promise<T> {
+  const next = writeChain.then(fn);
+  writeChain = next.catch(() => undefined);
+  return next as Promise<T>;
+}
+
+function saveSynced(): void {
+  atomicWriteJson(STORE_FILE, data);
+}
+
 function keyMask(key?: string): string {
   if (!key || key.length === 0) return "";
   if (key.length <= 4) return "****";
@@ -106,9 +122,10 @@ function assertProviderId(id: string): void {
   }
 }
 
-export function upsertProfile(
+export async function upsertProfile(
   input: ProviderProfileUpsertInput
-): ProviderProfilePublic {
+): Promise<ProviderProfilePublic> {
+  return enqueue(() => {
   const name = input.name.trim();
   const providerId = input.providerId.trim().toLowerCase();
   if (!name) throw new Error("名称不能为空");
@@ -160,14 +177,17 @@ export function upsertProfile(
   data.profiles.push(profile);
   save();
   return toPublic(profile);
+  });
 }
 
 export function deleteProfile(id: string): void {
-  const idx = data.profiles.findIndex((p) => p.id === id);
-  if (idx === -1) throw new Error("Profile 不存在");
-  data.profiles.splice(idx, 1);
-  if (data.activeProfileId === id) data.activeProfileId = null;
-  save();
+  void enqueue(() => {
+    const idx = data.profiles.findIndex((p) => p.id === id);
+    if (idx === -1) throw new Error("Profile 不存在");
+    data.profiles.splice(idx, 1);
+    if (data.activeProfileId === id) data.activeProfileId = null;
+    save();
+  });
 }
 
 export function getSecret(id: string): string {
@@ -192,111 +212,115 @@ function readJsonFile(path: string): Record<string, unknown> {
 }
 
 /** 将 Profile 写入 pi auth.json；有 baseUrl 时合并 models.json。 */
-export function activateProfile(id: string): ProviderProfilePublic {
-  const profile = data.profiles.find((p) => p.id === id);
-  if (!profile) throw new Error("Profile 不存在");
+export async function activateProfile(id: string): Promise<ProviderProfilePublic> {
+  return enqueue(() => {
+    const profile = data.profiles.find((p) => p.id === id);
+    if (!profile) throw new Error("Profile 不存在");
 
-  if (profile.authType === "oauth_placeholder" && !profile.apiKey) {
-    throw new Error(
-      "OAuth Profile 无法通过 Hub 激活写 key；请在 pi 中 /login，或改为 API Key"
-    );
-  }
-  if (!profile.apiKey) {
-    throw new Error("请先填写 API Key");
-  }
+    if (profile.authType === "oauth_placeholder" && !profile.apiKey) {
+      throw new Error(
+        "OAuth Profile 无法通过 Hub 激活写 key；请在 pi 中 /login，或改为 API Key"
+      );
+    }
+    if (!profile.apiKey) {
+      throw new Error("请先填写 API Key");
+    }
 
-  if (!existsSync(PI_AGENT_DIR)) {
-    mkdirSync(PI_AGENT_DIR, { recursive: true });
-  }
+    if (!existsSync(PI_AGENT_DIR)) {
+      mkdirSync(PI_AGENT_DIR, { recursive: true });
+    }
 
-  const auth = readJsonFile(AUTH_FILE);
-  auth[profile.providerId] = {
-    type: "api_key",
-    key: profile.apiKey,
-  };
-  atomicWriteJson(AUTH_FILE, auth);
-
-  if (profile.baseUrl) {
-    const modelsRoot = readJsonFile(MODELS_FILE);
-    const providers =
-      modelsRoot.providers &&
-      typeof modelsRoot.providers === "object" &&
-      !Array.isArray(modelsRoot.providers)
-        ? { ...(modelsRoot.providers as Record<string, unknown>) }
-        : {};
-    const prev =
-      providers[profile.providerId] &&
-      typeof providers[profile.providerId] === "object" &&
-      !Array.isArray(providers[profile.providerId])
-        ? { ...(providers[profile.providerId] as Record<string, unknown>) }
-        : {};
-    providers[profile.providerId] = {
-      ...prev,
-      baseUrl: profile.baseUrl,
+    const auth = readJsonFile(AUTH_FILE);
+    auth[profile.providerId] = {
+      type: "api_key",
+      key: profile.apiKey,
     };
-    modelsRoot.providers = providers;
-    atomicWriteJson(MODELS_FILE, modelsRoot);
-  }
+    atomicWriteJson(AUTH_FILE, auth);
 
-  data.activeProfileId = id;
-  profile.updatedAt = Date.now();
-  save();
-  return toPublic(profile);
+    if (profile.baseUrl) {
+      const modelsRoot = readJsonFile(MODELS_FILE);
+      const providers =
+        modelsRoot.providers &&
+        typeof modelsRoot.providers === "object" &&
+        !Array.isArray(modelsRoot.providers)
+          ? { ...(modelsRoot.providers as Record<string, unknown>) }
+          : {};
+      const prev =
+        providers[profile.providerId] &&
+        typeof providers[profile.providerId] === "object" &&
+        !Array.isArray(providers[profile.providerId])
+          ? { ...(providers[profile.providerId] as Record<string, unknown>) }
+          : {};
+      providers[profile.providerId] = {
+        ...prev,
+        baseUrl: profile.baseUrl,
+      };
+      modelsRoot.providers = providers;
+      atomicWriteJson(MODELS_FILE, modelsRoot);
+    }
+
+    data.activeProfileId = id;
+    profile.updatedAt = Date.now();
+    save();
+    return toPublic(profile);
+  });
 }
 
 /**
  * 从现有 auth.json 导入 Profile（不覆盖同名 providerId 已有 Hub Profile）。
  * OAuth 条目导入为 oauth_placeholder（无明文 key）。
  */
-export function importFromAuth(): {
+export async function importFromAuth(): Promise<{
   imported: number;
   profiles: ProviderProfilePublic[];
-} {
-  if (!existsSync(AUTH_FILE)) {
-    return { imported: 0, profiles: listProfiles().profiles };
-  }
-  const auth = readJsonFile(AUTH_FILE);
-  const existingProviderIds = new Set(data.profiles.map((p) => p.providerId));
-  let imported = 0;
-  const now = Date.now();
+}> {
+  return enqueue(() => {
+    if (!existsSync(AUTH_FILE)) {
+      return { imported: 0, profiles: listProfiles().profiles };
+    }
+    const auth = readJsonFile(AUTH_FILE);
+    const existingProviderIds = new Set(data.profiles.map((p) => p.providerId));
+    let imported = 0;
+    const now = Date.now();
 
-  for (const [providerId, value] of Object.entries(auth)) {
-    if (!PROVIDER_ID_RE.test(providerId)) continue;
-    if (existingProviderIds.has(providerId)) continue;
-    if (!value || typeof value !== "object") continue;
-    const entry = value as { type?: string; key?: string };
+    for (const [providerId, value] of Object.entries(auth)) {
+      if (!PROVIDER_ID_RE.test(providerId)) continue;
+      if (existingProviderIds.has(providerId)) continue;
+      if (!value || typeof value !== "object") continue;
+      const entry = value as { type?: string; key?: string };
 
-    if (entry.type === "api_key" && typeof entry.key === "string" && entry.key) {
+      if (entry.type === "api_key" && typeof entry.key === "string" && entry.key) {
+        data.profiles.push({
+          id: randomUUID(),
+          name: providerId,
+          providerId,
+          authType: "api_key",
+          apiKey: entry.key,
+          createdAt: now,
+          updatedAt: now,
+        });
+        imported += 1;
+        existingProviderIds.add(providerId);
+        continue;
+      }
+
+      // oauth / 其他：占位
       data.profiles.push({
         id: randomUUID(),
-        name: providerId,
+        name: `${providerId} (OAuth)`,
         providerId,
-        authType: "api_key",
-        apiKey: entry.key,
+        authType: "oauth_placeholder",
+        notes: "由 pi /login 管理，Hub 仅展示状态",
         createdAt: now,
         updatedAt: now,
       });
       imported += 1;
       existingProviderIds.add(providerId);
-      continue;
     }
 
-    // oauth / 其他：占位
-    data.profiles.push({
-      id: randomUUID(),
-      name: `${providerId} (OAuth)`,
-      providerId,
-      authType: "oauth_placeholder",
-      notes: "由 pi /login 管理，Hub 仅展示状态",
-      createdAt: now,
-      updatedAt: now,
-    });
-    imported += 1;
-    existingProviderIds.add(providerId);
-  }
-
-  if (imported > 0) save();
-  return { imported, profiles: listProfiles().profiles };
+    if (imported > 0) save();
+    return { imported, profiles: listProfiles().profiles };
+  });
 }
 
 /** 常见 provider 预设（UI 下拉）。 */

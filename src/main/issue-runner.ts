@@ -51,6 +51,14 @@ interface RunnerDeps {
 
 let deps: RunnerDeps | null = null;
 
+/**
+ * 派活去重的进程内锁：以 `${issueId}|${agentName}` 为键。
+ * 关键点：guard 必须在 hasPendingTask 检查**之前**就位，把"读 + 写"收敛到
+ * 不跨 await 的同步临界区，否则 mention/cron/UI 并发可绕过 hasPendingTask
+ * 双开 pi 子进程。失败/成功出口统一 finally 释放。
+ */
+const inflightEnqueues = new Set<string>();
+
 /** 最近一次成功 dispatch 的模型偏好（主进程侧，供 Assign 触发使用）。 */
 let lastProvider = "";
 let lastModel = "";
@@ -301,6 +309,12 @@ export async function enqueueForAgent(
   trigger: TaskTrigger,
   opts?: EnqueueOpts
 ): Promise<{ ok: true; task: Task | null; skipped?: string } | { ok: false; error: string }> {
+  // 进程内去重锁：在 hasPendingTask 检查之前同步占位，跨 await 不可被绕过。
+  const inflightKey = `${issueId}|${agentName}`;
+  if (!opts?.force && inflightEnqueues.has(inflightKey)) {
+    return { ok: true, task: null, skipped: "派活进行中" };
+  }
+  inflightEnqueues.add(inflightKey);
   try {
     const issue = issueStore.getIssue(issueId);
     if (!issue) return { ok: false, error: "Issue 不存在" };
@@ -363,6 +377,8 @@ export async function enqueueForAgent(
     return { ok: true, task: taskStore.getTask(task.id) ?? task };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
+  } finally {
+    inflightEnqueues.delete(inflightKey);
   }
 }
 
@@ -397,15 +413,22 @@ export async function maybeEnqueue(
       if (trigger === "assign" || trigger === "rerun" || trigger === "status") {
         await cancelIssueWork(issueId, squad.leaderAgentName, trigger === "rerun");
       }
-      // 反自触发：评论已含 agent mention 时不启动 leader
+      // 反自触发：最近 N 条评论中任一含 agent mention 时不启动 leader（避免只看末条漏判）。
+      // N 取 5：覆盖正常批评论节奏，超出视为历史派活意图已被处理。
       if (trigger === "status" || trigger === "assign") {
+        const RECENT_N = 5;
         const comments = issueStore.listComments(issueId);
-        const last = comments[comments.length - 1];
-        if (last) {
-          const ms = uniqueMentions(last.body).filter((m) => m.kind === "agent");
-          if (ms.length > 0) {
-            return { ok: true, task: null, skipped: "评论已含显式 mention，跳过 leader" };
-          }
+        const recent = comments.slice(-RECENT_N);
+        const hasAgentMention = recent.some(
+          (c) =>
+            uniqueMentions(c.body).filter((m) => m.kind === "agent").length > 0
+        );
+        if (hasAgentMention) {
+          return {
+            ok: true,
+            task: null,
+            skipped: "评论已含显式 mention，跳过 leader",
+          };
         }
       }
       return enqueueForAgent(issueId, squad.leaderAgentName, "squad_leader", {
@@ -606,6 +629,15 @@ async function cancelIssueWork(
       }
     }
   }
+  // 取消 task 后若 issue 当前是 in_progress，回滚到 todo 防止 UI 孤儿态。
+  // 仅在确实有任务被取消时才回滚（避免空跑回滚）；若 issue 已是 done/cancelled/backlog 不动。
+  if (active.length > 0) {
+    const issue = issueStore.getIssue(issueId);
+    if (issue && issue.status === "in_progress") {
+      const rolled = issueStore.setIssueStatus(issueId, "todo");
+      if (rolled) emitIssue(rolled);
+    }
+  }
 }
 
 async function dispatch(
@@ -616,26 +648,18 @@ async function dispatch(
   let task = taskStore.getTask(taskId);
   if (!task || task.status !== "queued") return;
 
-  const issue = issueStore.getIssue(task.issueId);
-  if (!issue) {
-    failTaskWithInfo(taskId, classifyError("Issue 已删除"));
-    return;
-  }
+  // 注意：先把 dispatched 置位和 issue.status 推进挪进 try 块。
+  // 原写法在 try 外，若 store 抛错 task 会卡在 dispatched 直到 5min 监控兜底。
+  // tryStart 内部需要访问 issue 与 task，闭包捕获外部 const。
 
-  task = taskStore.updateTask(taskId, { status: "dispatched" }) ?? task;
-  emitTask(task);
-
-  if (issue.status === "todo") {
-    const updated = issueStore.setIssueStatus(task.issueId, "in_progress");
-    if (updated) emitIssue(updated);
-  }
-
+  let issue: Issue | undefined;
   const tryStart = async (resumePiSessionId?: string) => {
+    if (!issue) throw new Error("Issue 已删除");
     return d.sessions.start({
       provider: task!.provider,
       model: task!.model,
       cwd: task!.cwd,
-      title: `${issue!.key} ${issue!.title}`,
+      title: `${issue.key} ${issue.title}`,
       agentName: task!.agentName,
       issueId: task!.issueId,
       resumePiSessionId,
@@ -643,6 +667,19 @@ async function dispatch(
   };
 
   try {
+    // 进入 try 后才动状态：后续抛错可被 catch 走 failTaskWithInfo
+    task = taskStore.updateTask(taskId, { status: "dispatched" }) ?? task;
+    emitTask(task);
+
+    issue = issueStore.getIssue(task.issueId);
+    if (!issue) {
+      throw new Error("Issue 已删除");
+    }
+    if (issue.status === "todo") {
+      const updated = issueStore.setIssueStatus(task.issueId, "in_progress");
+      if (updated) emitIssue(updated);
+    }
+
     let snap;
     const wantResume =
       task.piSessionId &&
@@ -655,8 +692,10 @@ async function dispatch(
       snap = await tryStart(resumeId);
     } catch (e) {
       const msg = (e as Error).message || String(e);
-      if (resumeId && /session_poisoned|get_state/i.test(msg)) {
-        // Multica：resume 失败 → 同 cwd 全新 session
+      // 修复 14：resume 路径任何启动失败都丢弃 piSessionId 降级，不再带毒 session 重试。
+      // 原写法仅当错误消息匹配 session_poisoned|get_state 才降级，其他错误会原样抛出，
+      // 让 enqueueRetry 拿着相同的 piSessionId 反复重试，浪费额度。
+      if (resumeId) {
         const degraded = degradeAfterResumeFailure(
           { cwd: task.cwd, resumePiSessionId: resumeId, reason: "resume" },
           msg
@@ -714,11 +753,13 @@ async function dispatch(
   }
 }
 
-/** 内部：失败后自动重试（trigger=retry）。 */
+/** 内部：失败后自动重试（trigger=retry）。
+ *  重试规则：retryable error 才重试；agent_error 不重试（agent 自身错误不该自动重试）；
+ *  cron / mention / assign / rerun / create / squad_leader / squad_member / retry 均按 retryable 自动重试。
+ *  attempt 上限由 settings.maxRetries 控制。 */
 async function enqueueRetry(failedTask: Task): Promise<void> {
   const settings = settingsStore.getSettings();
   if (failedTask.attempt >= settings.maxRetries) return;
-  if (failedTask.trigger === "cron") return;
 
   const resume = decideResume({
     prior: failedTask,
@@ -800,10 +841,10 @@ export function failTaskWithInfo(
   });
   emitComment(c);
 
-  if (errorInfo.retryable) {
+  if (errorInfo.retryable && errorInfo.reason !== "agent_error") {
     void enqueueRetry(task);
   } else {
-    // 不可重试耗尽 / agent_error → 通知人
+    // 不可重试 / agent_error → 通知人
     const issue = issueStore.getIssue(task.issueId);
     pushInbox({
       kind: "task_failed",
@@ -816,6 +857,7 @@ export function failTaskWithInfo(
   // retryable 但已达上限
   if (
     errorInfo.retryable &&
+    errorInfo.reason !== "agent_error" &&
     task.attempt >= settingsStore.getSettings().maxRetries
   ) {
     const issue = issueStore.getIssue(task.issueId);

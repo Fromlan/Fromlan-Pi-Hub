@@ -5,7 +5,45 @@ import * as agentManager from "./agent-manager";
 import * as pluginManager from "./plugin-manager";
 import type { SkillExtractMode } from "../shared/types";
 
-const SKILL_FENCE_RE = /```fromlan-skill\s*\r?\n([\s\S]*?)```/i;
+interface SkillFence {
+  /** fence 起止在原 summary 中的字节范围（左闭右开） */
+  start: number;
+  end: number;
+  /** fence 内容（不含 ```fromlan-skill 和 ``` 闭合行） */
+  inner: string;
+}
+
+/**
+ * 按"行首三引号配对"扫描 fromlan-skill 围栏。
+ * 行首匹配确保不被围栏内嵌套 ```python / ```js 等示例代码误截断。
+ */
+function findSkillFences(summary: string): SkillFence[] {
+  const lines = summary.split(/\r?\n/);
+  const fences: SkillFence[] = [];
+  let cursor = 0;
+  let openLine = -1;
+  let openStart = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const lineStart = cursor;
+    const lineEnd = cursor + lines[i].length;
+    cursor = lineEnd + 1; // +1 for the \n
+    if (openLine < 0) {
+      if (/^```fromlan-skill\s*$/i.test(lines[i])) {
+        openLine = i;
+        openStart = lineStart;
+      }
+    } else {
+      if (/^```\s*$/.test(lines[i])) {
+        const innerStart = openStart + lines[openLine].length + 1; // skip open line + \n
+        const inner = summary.slice(innerStart, lineStart);
+        fences.push({ start: openStart, end: lineEnd, inner });
+        openLine = -1;
+      }
+    }
+  }
+  return fences;
+}
+
 const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export interface ParsedSkillTrailer {
@@ -19,13 +57,24 @@ export interface SkillExtractResult {
   skill?: ParsedSkillTrailer;
 }
 
-/** 从摘要中剥离并解析 `fromlan-skill` 围栏。 */
+/** 从摘要中剥离并解析 `fromlan-skill` 围栏（取最后一个 fence；cleanSummary 移除所有 fence）。 */
 export function parseSkillTrailer(summary: string): SkillExtractResult {
-  const match = summary.match(SKILL_FENCE_RE);
-  if (!match) return { cleanSummary: summary };
+  const fences = findSkillFences(summary);
+  if (fences.length === 0) return { cleanSummary: summary };
 
-  const cleanSummary = summary.replace(SKILL_FENCE_RE, "").trim();
-  const raw = match[1].trim();
+  // cleanSummary：把所有 fence 区间替换为空
+  let cleanSummary = "";
+  let cursor = 0;
+  for (const f of fences) {
+    cleanSummary += summary.slice(cursor, f.start);
+    cursor = f.end;
+    if (cursor < summary.length && summary[cursor] === "\n") cursor += 1;
+  }
+  cleanSummary += summary.slice(cursor);
+  cleanSummary = cleanSummary.trim();
+
+  // 解析最后一个 fence 作为最终 skill
+  const raw = fences[fences.length - 1].inner.trim();
   const sepIdx = raw.search(/\r?\n---\r?\n/);
   let header: string;
   let markdown: string;

@@ -85,10 +85,15 @@ export function App() {
 
   useEffect(() => {
     if (!persistedActive) return;
+    const targetId = persistedActive.id;
     const store = useStore.getState();
-    if (store.messagesBySession[persistedActive.id]?.length) return;
-    window.sessionAPI.historyGetMessages(persistedActive.id).then((msgs) => {
-      store.importMessages(persistedActive.id, msgs);
+    if (store.messagesBySession[targetId]?.length) return;
+    window.sessionAPI.historyGetMessages(targetId).then((msgs) => {
+      // 切到其它 session 后旧请求才返回：在重新比对 activePersistedId 后再写入。
+      // importMessages 用 sessionId 作 key，没有 target 守卫会污染当前会话。
+      const cur = useStore.getState();
+      if (cur.activePersistedId !== targetId) return;
+      cur.importMessages(targetId, msgs);
     });
   }, [persistedActive?.id]);
 

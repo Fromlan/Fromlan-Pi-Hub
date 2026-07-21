@@ -31,10 +31,19 @@ import type {
  */
 
 const USAGE_FILE = join(getBaseDir(), "usage-records.jsonl");
+/** 进程级去重持久化：跨重启仍能识别"已写过此 sessionId"。原子写避免丢行。 */
+const RECORDED_FILE = join(getBaseDir(), "usage-recorded-sessions.json");
 /** 保留最近 N 天原始记录。 */
 const RETENTION_DAYS = 90;
 /** 同一 session 只记一次（会话级累计快照）。 */
 const recordedSessions = new Set<string>();
+let recordedLoaded = false;
+
+/**
+ * 进程内写串行链：appendFileSync 与 pruneIfNeeded 全量重写都走此 Promise chain，
+ * 杜绝 append 与 rename 竞争丢行。所有调用 await writeChain 即可排队执行。
+ */
+let writeChain: Promise<unknown> = Promise.resolve();
 
 function ensureDir(): void {
   const dir = dirname(USAGE_FILE);
@@ -45,6 +54,32 @@ function atomicWriteText(p: string, text: string): void {
   const tmp = p + ".tmp";
   writeFileSync(tmp, text, "utf8");
   renameSync(tmp, p);
+}
+
+function atomicWriteJson(p: string, data: unknown): void {
+  atomicWriteText(p, JSON.stringify(data, null, 2));
+}
+
+/** 首次访问 recordedSessions 时从磁盘恢复（保证跨重启去重）。 */
+function ensureRecordedLoaded(): void {
+  if (recordedLoaded) return;
+  recordedLoaded = true;
+  if (!existsSync(RECORDED_FILE)) return;
+  try {
+    const arr = JSON.parse(readFileSync(RECORDED_FILE, "utf8")) as unknown;
+    if (Array.isArray(arr)) {
+      for (const s of arr) {
+        if (typeof s === "string") recordedSessions.add(s);
+      }
+    }
+  } catch {
+    // 损坏的 recordedFile 不致命，下次启动自然重建
+  }
+}
+
+/** 串行化：把 recordedSessions 落盘（tmp + rename）。 */
+function persistRecorded(): void {
+  atomicWriteJson(RECORDED_FILE, Array.from(recordedSessions));
 }
 
 function parseLine(line: string): UsageRecord | null {
@@ -103,7 +138,8 @@ function dayStartMs(daysAgo: number): number {
   return d.getTime();
 }
 
-/** 裁剪超出保留期的记录（写回整文件）。 */
+/** 裁剪超出保留期的记录（写回整文件）。仅在 records 确实变化时落盘。
+ *  调用方应通过 writeChain 串行化此操作与 appendRecord。 */
 function pruneIfNeeded(records: UsageRecord[]): UsageRecord[] {
   const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const kept = records.filter((r) => r.createdAt >= cutoff);
@@ -131,11 +167,18 @@ export function toTaskUsageSnapshot(r: Pick<
   };
 }
 
+/**
+ * 追加一条用量记录。返回 Promise：调用方 await 即串行化，避免 appendFileSync 与
+ * pruneIfNeeded 全量重写竞争丢行。同一 sessionId 跨重启不再重复写。
+ * 全零且无 cost 的记录仅 add 到 recordedSessions（不写盘）。
+ */
 export function appendRecord(
   input: Omit<UsageRecord, "id" | "createdAt"> & { createdAt?: number }
-): UsageRecord | null {
+): Promise<UsageRecord | null> {
+  ensureRecordedLoaded();
+  // 同步 fast-path：已知 session 已写过，直接返回 null，不入队。
   if (input.sessionId && recordedSessions.has(input.sessionId)) {
-    return null;
+    return Promise.resolve(null);
   }
   const record: UsageRecord = {
     id: randomUUID(),
@@ -152,20 +195,36 @@ export function appendRecord(
     costUsd: input.costUsd,
     createdAt: input.createdAt ?? Date.now(),
   };
-  // 全零且无 cost 则跳过（探测进程 / 空会话）
   const total =
     record.inputTokens +
     record.outputTokens +
     record.cacheReadTokens +
     record.cacheWriteTokens;
-  if (total === 0 && record.costUsd === 0) {
-    if (input.sessionId) recordedSessions.add(input.sessionId);
-    return null;
-  }
-  ensureDir();
-  appendFileSync(USAGE_FILE, JSON.stringify(record) + "\n", "utf8");
-  if (input.sessionId) recordedSessions.add(input.sessionId);
-  return record;
+
+  const next = writeChain.then(async () => {
+    // 在串行链内二次检查：避免 has/add 之间的 race（其它 append 可能已写入并 add）。
+    if (input.sessionId && recordedSessions.has(input.sessionId)) {
+      return null as UsageRecord | null;
+    }
+    if (total === 0 && record.costUsd === 0) {
+      // 全零跳过：不写盘，但仍标记已处理（避免下次重复试探）
+      if (input.sessionId) {
+        recordedSessions.add(input.sessionId);
+        persistRecorded();
+      }
+      return null as UsageRecord | null;
+    }
+    ensureDir();
+    appendFileSync(USAGE_FILE, JSON.stringify(record) + "\n", "utf8");
+    if (input.sessionId) {
+      recordedSessions.add(input.sessionId);
+      persistRecorded();
+    }
+    return record as UsageRecord | null;
+  });
+  // 防止 writeChain 上挂未捕获异常导致后续调用 hang 死。
+  writeChain = next.catch(() => undefined);
+  return next;
 }
 
 export function listByIssue(issueId: string): UsageRecord[] {
@@ -176,6 +235,7 @@ export function listByIssue(issueId: string): UsageRecord[] {
 
 export function clearUsage(): void {
   recordedSessions.clear();
+  recordedLoaded = true;
   ensureDir();
   if (existsSync(USAGE_FILE)) {
     try {
@@ -184,14 +244,28 @@ export function clearUsage(): void {
       atomicWriteText(USAGE_FILE, "");
     }
   }
+  if (existsSync(RECORDED_FILE)) {
+    try {
+      unlinkSync(RECORDED_FILE);
+    } catch {
+      atomicWriteText(RECORDED_FILE, "[]");
+    }
+  }
 }
 
-export function summarize(query: UsageSummaryQuery = {}): UsageSummaryResult {
+/** 汇总接口。async 以便 await 串行链：保证 prune 看到的写入已全部落盘，避免丢行。 */
+export async function summarize(query: UsageSummaryQuery = {}): Promise<UsageSummaryResult> {
+  // 先排空写链：让所有挂起的 appendRecord 完成
+  await writeChain;
   const days = Math.max(1, Math.min(365, query.days ?? 30));
   const projectId = query.projectId || undefined;
   const provider = query.provider || undefined;
   const agentNameFilter = query.agentName || undefined;
-  let records = pruneIfNeeded(loadAll());
+  // prune 也走 writeChain（写盘动作），与后续 append 串行
+  let records: UsageRecord[] = loadAll();
+  const pruneTask = writeChain.then(() => pruneIfNeeded(records));
+  writeChain = pruneTask.catch(() => undefined);
+  records = await pruneTask;
   const since = dayStartMs(days - 1);
 
   if (projectId) {

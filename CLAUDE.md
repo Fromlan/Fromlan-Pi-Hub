@@ -163,7 +163,7 @@ src/
 pi 的 `abort` 命令不发 response，所以 `SessionManager.abort` 用 `sendFireAndForget` 而非 `send`。否则在流式运行中按"中止"会留一个永久 pending request。
 
 ### Task 可靠性
-- `task-monitor` 默认每 5s 扫描；超时与 offline 类错误 `retryable`，最多 `maxRetries` 次总尝试（含首次）；`agent_error` 与 `cron` 触发不自动重试。
+- `task-monitor` 默认每 5s 扫描；超时与 offline 类错误 `retryable`，最多 `maxRetries` 次总尝试（含首次）；`agent_error` 触发不自动重试；`cron` / `mention` / `assign` / `rerun` / `create` / `squad_leader` / `squad_member` / `retry` 触发按 `retryable` 自动重试。
 - `session_poisoned`（上下文溢出等）：自动重试时 **复用 workdir、丢弃 `--session`**；`--session` 启动失败同样降级。
 - Issue 级 `rerun` 始终新会话；TaskHistory 逐行重试传 `resumeFromTaskId` 走 resume 门闸（见 `resume-policy.ts`）。
 - 改超时/重试/Skill 提炼走 `settings-store`，勿硬编码魔法数到 monitor。

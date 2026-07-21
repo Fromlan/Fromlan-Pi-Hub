@@ -387,36 +387,51 @@ export class SessionManager extends EventEmitter {
     return n;
   }
 
-  /** 订阅 client 事件；exit 时无论有无消息都从 map 移除（有消息则持久化）。 */
+  /**
+   * 子进程异常退出/error 路径的收尾：captureUsage → emit failed → 删 map → 持久化 → emit killed。
+   * exit 与 error 监听器共用，避免两处代码漂移。失败/异常路径均通过 has(id) 守卫防止双触发。
+   */
+  private async teardownSession(
+    id: string,
+    session: ManagedSession,
+    errorReason: string
+  ): Promise<void> {
+    if (!this.sessions.has(id)) return;
+    session.status = "exited";
+    this.emit("change", this.toSnapshot(session));
+    if (session.issueId && !session.usageCaptured) {
+      try {
+        await this.captureUsage(session);
+      } catch {
+        // captureUsage 已内部 swallow；继续
+      }
+    }
+    if (session.issueId) {
+      this.emit("issue-session-failed", {
+        sessionId: id,
+        error: errorReason,
+      });
+    }
+    this.sessions.delete(id);
+    if (session.messageCount > 0) {
+      const snap = this.toSnapshot(session);
+      snap.status = "exited";
+      this._persistedSessions.push(snap);
+      persistence.saveSessions(this._persistedSessions);
+    }
+    this.emit("killed", id);
+  }
+
+  /** 订阅 client 事件；exit 与 error 统一走 teardownSession 防僵尸。 */
   private wireClient(id: string, session: ManagedSession): void {
     session.client.on("event", (event: PiEvent) => this.handleEvent(id, event));
     session.client.on("error", (err) => {
       // EventEmitter 在无 error 监听时会抛未捕获异常把主进程带崩
       console.error(`[pi-rpc ${id}] error:`, err);
-      if (this.sessions.has(id)) {
-        session.status = "exited";
-        this.emit("change", this.toSnapshot(session));
-      }
+      void this.teardownSession(id, session, err.message || "pi 进程错误");
     });
     session.client.on("exit", () => {
-      session.status = "exited";
-      this.emit("change", this.toSnapshot(session));
-      // kill() 已从 sessions 中 delete，不会重复；零消息也要清掉，避免僵尸条目
-      if (!this.sessions.has(id)) return;
-      if (session.issueId) {
-        this.emit("issue-session-failed", {
-          sessionId: id,
-          error: "pi 进程意外退出",
-        });
-      }
-      this.sessions.delete(id);
-      if (session.messageCount > 0) {
-        const snap = this.toSnapshot(session);
-        snap.status = "exited";
-        this._persistedSessions.push(snap);
-        persistence.saveSessions(this._persistedSessions);
-      }
-      this.emit("killed", id);
+      void this.teardownSession(id, session, "pi 进程意外退出");
     });
   }
 
@@ -512,7 +527,7 @@ export class SessionManager extends EventEmitter {
       const task =
         taskStore.getTaskBySession(session.id) ??
         taskStore.findTaskBySessionId(session.id);
-      const record = usageStore.appendRecord({
+      const record = await usageStore.appendRecord({
         sessionId: session.id,
         taskId: task?.id,
         issueId: session.issueId ?? task?.issueId,
